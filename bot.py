@@ -322,15 +322,16 @@ async def error_handler(update: Update, context: ContextTypes):
     if str(context.error).startswith("Conflict"):
         logger.error("Conflict detected! Ensure only one bot instance is running.")
 
-async def on_start(application):
+def main():
+    application = Application.builder().token(TOKEN).build()
+
+    # Удаление webhook перед запуском polling
     try:
-        await application.bot.delete_webhook(drop_pending_updates=True)
+        loop = application.job_queue.loop
+        loop.run_until_complete(application.bot.delete_webhook(drop_pending_updates=True))
         logger.info("Webhook deleted successfully")
     except Exception as e:
         logger.error(f"Failed to delete webhook: {e}")
-
-def main():
-    application = Application.builder().token(TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(callback_query_handler))
@@ -342,8 +343,7 @@ def main():
         application.run_polling(
             drop_pending_updates=True,
             bootstrap_retries=3,
-            timeout=30,
-            bootstrap_callback=on_start
+            timeout=30
         )
     except Exception as e:
         logger.error(f"Polling failed: {e}")
