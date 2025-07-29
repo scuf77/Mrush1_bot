@@ -138,7 +138,7 @@ async def start(update: Update, context: ContextTypes):
         await update.message.reply_text("⏰ Бот работает с 8:00 до 23:00. Пожалуйста, напишите позже.")
         return
 
-    async def send_welcome_message(context: ContextTypes, chat_id: int):
+async def send_welcome_message(context: ContextTypes, chat_id: int):
     greeting = (
         "🤖 *Привет, я Mrush1* — бот для размещения объявлений о *покупке, продаже и обмене игровых аккаунтов*!\n\n"
         "📌 Ознакомься с правилами:\n"
