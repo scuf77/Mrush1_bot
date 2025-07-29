@@ -1,7 +1,7 @@
 import logging
 import re
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo  # Добавлено для работы с часовым поясом
+from zoneinfo import ZoneInfo
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
@@ -46,7 +46,7 @@ BACK_BUTTON = ReplyKeyboardMarkup(
 )
 
 def is_within_working_hours() -> bool:
-    now = datetime.now(ZoneInfo("Europe/Moscow")).hour  # Установите нужный часовой пояс
+    now = datetime.now(ZoneInfo("Europe/Moscow")).hour
     logger.info(f"Current server time: {datetime.now(ZoneInfo('Europe/Moscow'))}, Hour: {now}")
     return START_HOUR <= now < END_HOUR
 
@@ -136,10 +136,10 @@ def check_file_extension(file_name: str) -> bool:
     return any(file_name.lower().endswith(ext) for ext in ALLOWED_IMAGE_EXTENSIONS)
 
 async def start(update: Update, context: ContextTypes):
+    logger.info(f"Received /start command from user {update.effective_user.id}")
     if not is_within_working_hours():
         await update.message.reply_text("⏰ Бот работает с 8:00 до 23:00. Пожалуйста, напишите позже.")
         return
-    logger.info(f"Received /start command from user {update.effective_user.id}")
     await send_welcome_message(context, update.effective_chat.id)
 
 async def send_welcome_message(context: ContextTypes, chat_id: int):
@@ -151,15 +151,16 @@ async def send_welcome_message(context: ContextTypes, chat_id: int):
         "📸 *Вот пример поста:*"
     )
 
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=greeting,
-        parse_mode="Markdown",
-        disable_web_page_preview=True,
-        reply_markup=MAIN_MENU
-    )
-
     try:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=greeting,
+            parse_mode="Markdown",
+            disable_web_page_preview=True,
+            reply_markup=MAIN_MENU
+        )
+
+        # Попытка отправки изображения
         with open("primerbot.jpg", "rb") as photo:
             await context.bot.send_photo(
                 chat_id=chat_id,
@@ -174,8 +175,8 @@ async def send_welcome_message(context: ContextTypes, chat_id: int):
         logger.warning("Файл primerbot.jpg не найден, пропускаем отправку изображения")
         await context.bot.send_message(chat_id=chat_id, text="⚠️ Не удалось найти пример изображения.")
     except Exception as e:
-        logger.error(f"Ошибка при отправке изображения: {e}")
-        await context.bot.send_message(chat_id=chat_id, text="⚠️ Не удалось отправить пример изображения.")
+        logger.error(f"Ошибка при отправке приветственного сообщения или изображения: {e}")
+        await context.bot.send_message(chat_id=chat_id, text="⚠️ Произошла ошибка при отправке сообщения.")
 
 async def contact_admin(update: Update, context: ContextTypes):
     if not is_within_working_hours():
@@ -198,7 +199,7 @@ async def show_help(update: Update, context: ContextTypes):
         "2. Нажми /start\n"
         "3. Отправь объявление боту (текст и, при желании, фото в формате JPG, JPEG, PNG или GIF)\n\n"
         "⚠ Требования к постам:\n"
-        "- Цель (продам/куплю/обмен) или укажите #оффтоп (если тема не связана с игрой Разрушители))\n"
+        "- Цель (продам/куплю/обмен) или укажите #оффтоп (если тема не связана с игрой Разрушители)\n"
         "- Цена или бюджет (Продаю за 1000₽/Куплю до 500₽/Меняю + доплата 300₽)\n"
         "- Почта (есть/утеряна/можно указать свою). Не требуется для #оффтоп\n"
         "- Фото (по желанию, только JPG, JPEG, PNG, GIF)\n"
@@ -319,6 +320,13 @@ async def callback_query_handler(update: Update, context: ContextTypes):
 async def error_handler(update: Update, context: ContextTypes):
     logger.error(f"Update {update} caused error {context.error}")
 
+async def on_start(application):
+    try:
+        await application.bot.delete_webhook(drop_pending_updates=True)
+        logger.info("Webhook deleted successfully")
+    except Exception as e:
+        logger.error(f"Failed to delete webhook: {e}")
+
 def main():
     application = Application.builder().token(TOKEN).build()
 
@@ -328,7 +336,19 @@ def main():
     application.add_error_handler(error_handler)
 
     print("Бот запущен!")
-    application.run_polling(drop_pending_updates=True)
+    try:
+        application.run_polling(
+            drop_pending_updates=True,
+            bootstrap_retries=3,
+            timeout=30,
+            read_timeout=30,
+            write_timeout=30,
+            connect_timeout=30,
+            bootstrap_callback=on_start
+        )
+    except Exception as e:
+        logger.error(f"Polling failed: {e}")
+        raise
 
 if __name__ == '__main__':
     main()
