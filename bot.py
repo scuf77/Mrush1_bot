@@ -138,9 +138,7 @@ async def start(update: Update, context: ContextTypes):
         await update.message.reply_text("⏰ Бот работает с 8:00 до 23:00. Пожалуйста, напишите позже.")
         return
 
-    await send_welcome_message(context, update.effective_chat.id)
-
-async def send_welcome_message(context: ContextTypes, chat_id: int):
+    async def send_welcome_message(context: ContextTypes, chat_id: int):
     greeting = (
         "🤖 *Привет, я Mrush1* — бот для размещения объявлений о *покупке, продаже и обмене игровых аккаунтов*!\n\n"
         "📌 Ознакомься с правилами:\n"
@@ -158,7 +156,7 @@ async def send_welcome_message(context: ContextTypes, chat_id: int):
     )
 
     try:
-        with open(r"C:\Users\vardg\OneDrive\Рабочий стол\Python\primerbot.jpg", "rb") as photo:
+        with open("primerbot.jpg", "rb") as photo:
             await context.bot.send_photo(
                 chat_id=chat_id,
                 photo=photo,
@@ -169,6 +167,7 @@ async def send_welcome_message(context: ContextTypes, chat_id: int):
                 )
             )
     except FileNotFoundError:
+        logger.warning("Файл primerbot.jpg не найден, пропускаем отправку изображения")
         await context.bot.send_message(chat_id=chat_id, text="⚠️ Не удалось найти пример изображения.")
 
 async def contact_admin(update: Update, context: ContextTypes):
