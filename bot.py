@@ -1,32 +1,33 @@
-import asyncio
-from aiogram import Bot, Dispatcher
-from aiogram.enums import ParseMode
-from aiogram.types import Message
-from aiogram.filters import CommandStart
-from aiogram import F
-from webserver import app
-from threading import Thread
+import os
+import logging
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-TOKEN = "твой_токен"
+# Включаем логирование
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-bot = Bot(token=TOKEN, parse_mode=ParseMode.HTML)
-dp = Dispatcher()
+# Обработчик команды /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Привет! Я Telegram-бот.")
 
-@dp.message(CommandStart())
-async def command_start_handler(message: Message) -> None:
-    await message.answer("Привет!")
+# Обработчик всех текстовых сообщений
+async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"Вы сказали: {update.message.text}")
 
-@dp.message(F.text)
-async def handle_text(message: Message):
-    await message.answer("Ты написал: " + message.text)
+def main():
+    # Получаем токен из переменной окружения
+    token = os.getenv("TOKEN")
+    if not token:
+        raise ValueError("Не задана переменная окружения TOKEN")
 
-def run_web():
-    app.run(host="0.0.0.0", port=10000)
+    application = Application.builder().token(token).build()
 
-async def main():
-    await dp.start_polling(bot)
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
 
-if __name__ == "__main__":
-    # Запускаем фейковый веб-сервер параллельно с ботом
-    Thread(target=run_web).start()
-    asyncio.run(main())
+    # Запускаем polling
+    application.run_polling()
+
+if __name__ == '__main__':
+    main()
