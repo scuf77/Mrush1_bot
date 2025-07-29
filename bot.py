@@ -1,9 +1,11 @@
 import logging
 import re
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo  # Добавлено для работы с часовым поясом
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
+# Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
 )
@@ -12,16 +14,19 @@ logger = logging.getLogger(__name__)
 import os
 from dotenv import load_dotenv
 
+# Загрузка переменных окружения
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
-GROUP_CHAT_ID = '644710593'
-CHANNEL_ID = '@shop_mrush1'
+if not TOKEN:
+    raise ValueError("BOT_TOKEN not found in environment variables")
+
+GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID", "644710593")
+CHANNEL_ID = os.getenv("CHANNEL_ID", "@shop_mrush1")
 
 START_HOUR = 8
 END_HOUR = 23
 
 FORBIDDEN_WORDS = {'сука', 'блять', 'пиздец', 'хуй', 'ебать'}
-
 ALLOWED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif'}
 
 user_posts = {}
@@ -41,7 +46,8 @@ BACK_BUTTON = ReplyKeyboardMarkup(
 )
 
 def is_within_working_hours() -> bool:
-    now = datetime.now().hour
+    now = datetime.now(ZoneInfo("Europe/Moscow")).hour  # Установите нужный часовой пояс
+    logger.info(f"Current server time: {datetime.now(ZoneInfo('Europe/Moscow'))}, Hour: {now}")
     return START_HOUR <= now < END_HOUR
 
 async def check_subscription_and_block(context: ContextTypes, user_id: int) -> tuple[bool, str]:
@@ -87,15 +93,12 @@ def check_message(text: str, user_username: str) -> tuple[bool, str]:
     text_lower = text.lower()
     user_username = user_username.lower() if user_username else ""
 
-    # Проверка на наличие хэштега #офтоп (в любом регистре)
     is_offtopic = any(hashtag in text_lower for hashtag in ['#офтоп', '#оффтоп', '#офтоп', '#оффтоп'])
 
-    # Проверка наличия @username
     usernames = re.findall(r'@([a-zA-Z0-9_]{5,})', text)
     if not usernames:
         return False, "❌ В сообщении отсутствует контактная информация (@username)."
 
-    # Проверка действия и привязок только если нет хэштега #офтоп
     if not is_offtopic:
         actions = ['продам', 'обмен', 'куплю', 'продаю', 'обменяю', 'покупка', 'продажа']
         if not any(action in text_lower for action in actions):
@@ -105,7 +108,6 @@ def check_message(text: str, user_username: str) -> tuple[bool, str]:
         if not any(keyword in text_lower for keyword in mail_keywords):
             return False, "❌ Укажите информацию о привязках."
 
-    # Остальные проверки выполняются всегда
     if sum(c.isupper() for c in text) / len(text) > 0.7 and len(text) > 10:
         return False, "❌ Слишком много текста в верхнем регистре (капс)."
 
@@ -137,6 +139,8 @@ async def start(update: Update, context: ContextTypes):
     if not is_within_working_hours():
         await update.message.reply_text("⏰ Бот работает с 8:00 до 23:00. Пожалуйста, напишите позже.")
         return
+    logger.info(f"Received /start command from user {update.effective_user.id}")
+    await send_welcome_message(context, update.effective_chat.id)
 
 async def send_welcome_message(context: ContextTypes, chat_id: int):
     greeting = (
@@ -169,6 +173,9 @@ async def send_welcome_message(context: ContextTypes, chat_id: int):
     except FileNotFoundError:
         logger.warning("Файл primerbot.jpg не найден, пропускаем отправку изображения")
         await context.bot.send_message(chat_id=chat_id, text="⚠️ Не удалось найти пример изображения.")
+    except Exception as e:
+        logger.error(f"Ошибка при отправке изображения: {e}")
+        await context.bot.send_message(chat_id=chat_id, text="⚠️ Не удалось отправить пример изображения.")
 
 async def contact_admin(update: Update, context: ContextTypes):
     if not is_within_working_hours():
@@ -287,7 +294,6 @@ async def handle_message(update: Update, context: ContextTypes):
         )
         context.user_data['awaiting_post'] = True
     elif context.user_data.get('awaiting_post', False):
-        # Обработка текста, фото или документа
         await handle_post(update, context)
         context.user_data['awaiting_post'] = False
     else:
@@ -310,15 +316,19 @@ async def callback_query_handler(update: Update, context: ContextTypes):
                 ])
             )
 
+async def error_handler(update: Update, context: ContextTypes):
+    logger.error(f"Update {update} caused error {context.error}")
+
 def main():
     application = Application.builder().token(TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(callback_query_handler))
     application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO | filters.Document.IMAGE, handle_message))
+    application.add_error_handler(error_handler)
 
     print("Бот запущен!")
-    application.run_polling()
+    application.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
     main()
