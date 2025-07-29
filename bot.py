@@ -319,6 +319,8 @@ async def callback_query_handler(update: Update, context: ContextTypes):
 
 async def error_handler(update: Update, context: ContextTypes):
     logger.error(f"Update {update} caused error {context.error}")
+    if str(context.error).startswith("Conflict"):
+        logger.error("Conflict detected! Ensure only one bot instance is running.")
 
 async def on_start(application):
     try:
@@ -341,9 +343,6 @@ def main():
             drop_pending_updates=True,
             bootstrap_retries=3,
             timeout=30,
-            read_timeout=30,
-            write_timeout=30,
-            connect_timeout=30,
             bootstrap_callback=on_start
         )
     except Exception as e:
