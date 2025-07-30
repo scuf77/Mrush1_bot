@@ -9,7 +9,8 @@ from telegram import Bot
 
 # Настройка логирования
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
@@ -324,48 +325,25 @@ async def error_handler(update: Update, context: ContextTypes):
     if str(context.error).startswith("Conflict"):
         logger.error("Conflict detected! Ensure only one bot instance is running. Check for local instances, multiple Render services, or other deployments using the same token.")
 
-async def main_async():
-    application = None
-    try:
-        # Удаление webhook перед запуском polling
-        bot = Bot(token=TOKEN)
-        await bot.delete_webhook(drop_pending_updates=True)
-        logger.info("Webhook deleted successfully")
+async def main():
+    """Запуск бота."""
+    application = Application.builder().token(TOKEN).build()
 
-        application = Application.builder().token(TOKEN).build()
+    # Регистрация обработчиков
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(callback_query_handler))
+    application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO | filters.Document.IMAGE, handle_message))
+    application.add_error_handler(error_handler)
 
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(CallbackQueryHandler(callback_query_handler))
-        application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO | filters.Document.IMAGE, handle_message))
-        application.add_error_handler(error_handler)
-
-        logger.info("Бот запущен!")
-        await application.run_polling(
-            drop_pending_updates=True,
-            bootstrap_retries=3,
-            timeout=30
-        )
-    except asyncio.CancelledError:
-        logger.info("Получен сигнал отмены, завершаем работу...")
-    except Exception as e:
-        logger.error(f"Ошибка при работе бота: {e}")
-    finally:
-        if application:
-            await application.shutdown()
-            await application.updater.stop()
-            await application.stop()
-        logger.info("Бот остановлен")
-
-def main():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    try:
-        loop.run_until_complete(main_async())
-    except KeyboardInterrupt:
-        logger.info("Бот остановлен пользователем")
-    finally:
-        loop.close()
+    # Удаление webhook и запуск polling
+    await application.bot.delete_webhook(drop_pending_updates=True)
+    logger.info("Бот запущен...")
+    await application.run_polling()
 
 if __name__ == '__main__':
-    main()
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Бот остановлен")
+    except Exception as e:
+        logger.error(f"Ошибка при запуске бота: {e}")
