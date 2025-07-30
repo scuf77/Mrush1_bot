@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
+from telegram import Bot
 
 # Настройка логирования
 logging.basicConfig(
@@ -324,16 +325,15 @@ async def error_handler(update: Update, context: ContextTypes):
         logger.error("Conflict detected! Ensure only one bot instance is running.")
 
 def main():
-    application = Application.builder().token(TOKEN).build()
-
     # Удаление webhook перед запуском polling
     try:
-        asyncio.get_event_loop().run_until_complete(
-            application.bot.delete_webhook(drop_pending_updates=True)
-        )
+        bot = Bot(token=TOKEN)
+        asyncio.run(bot.delete_webhook(drop_pending_updates=True))
         logger.info("Webhook deleted successfully")
     except Exception as e:
         logger.error(f"Failed to delete webhook: {e}")
+
+    application = Application.builder().token(TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(callback_query_handler))
