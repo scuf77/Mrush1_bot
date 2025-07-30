@@ -322,7 +322,7 @@ async def callback_query_handler(update: Update, context: ContextTypes):
 async def error_handler(update: Update, context: ContextTypes):
     logger.error(f"Update {update} caused error {context.error}")
     if str(context.error).startswith("Conflict"):
-        logger.error("Conflict detected! Ensure only one bot instance is running.")
+        logger.error("Conflict detected! Ensure only one bot instance is running. Check for local instances, multiple Render services, or other deployments using the same token.")
 
 def main():
     # Удаление webhook перед запуском polling
