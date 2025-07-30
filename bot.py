@@ -324,11 +324,11 @@ async def error_handler(update: Update, context: ContextTypes):
     if str(context.error).startswith("Conflict"):
         logger.error("Conflict detected! Ensure only one bot instance is running. Check for local instances, multiple Render services, or other deployments using the same token.")
 
-def main():
+async def main_async():
     # Удаление webhook перед запуском polling
     try:
         bot = Bot(token=TOKEN)
-        asyncio.run(bot.delete_webhook(drop_pending_updates=True))
+        await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Webhook deleted successfully")
     except Exception as e:
         logger.error(f"Failed to delete webhook: {e}")
@@ -342,7 +342,7 @@ def main():
 
     print("Бот запущен!")
     try:
-        application.run_polling(
+        await application.run_polling(
             drop_pending_updates=True,
             bootstrap_retries=3,
             timeout=30
@@ -350,6 +350,9 @@ def main():
     except Exception as e:
         logger.error(f"Polling failed: {e}")
         raise
+
+def main():
+    asyncio.run(main_async())
 
 if __name__ == '__main__':
     main()
