@@ -1,5 +1,6 @@
 import logging
 import re
+import asyncio
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
@@ -327,8 +328,9 @@ def main():
 
     # Удаление webhook перед запуском polling
     try:
-        loop = application.job_queue.loop
-        loop.run_until_complete(application.bot.delete_webhook(drop_pending_updates=True))
+        asyncio.get_event_loop().run_until_complete(
+            application.bot.delete_webhook(drop_pending_updates=True)
+        )
         logger.info("Webhook deleted successfully")
     except Exception as e:
         logger.error(f"Failed to delete webhook: {e}")
