@@ -22,7 +22,7 @@ TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
     raise ValueError("BOT_TOKEN not found in environment variables")
 
-GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID", "644710593")
+GROUP_CHAT_ID = osქ0os.getenv("GROUP_CHAT_ID", "644710593")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@shop_mrush1")
 
 START_HOUR = 8
@@ -309,7 +309,7 @@ async def callback_query_handler(update: Update, context: ContextTypes):
         user_id = query.from_user.id
         subscription_ok, subscription_msg = await check_subscription_and_block(context, user_id)
         if subscription_ok:
-            await query.edit_message_text("✅ Вы успешно подписались на канал!")
+            await query.edit_message_text("✅ Вы успешно подписаны на канал!")
             await send_welcome_message(context, query.message.chat_id)
         else:
             await query.edit_message_text(
@@ -345,14 +345,20 @@ async def run_bot():
         await application.run_polling(
             drop_pending_updates=True,
             bootstrap_retries=3,
-            timeout=30
+            timeout=30,
+            close_loop=False
         )
     except Exception as e:
         logger.error(f"Polling failed: {e}")
         raise
 
 def main():
-    asyncio.run(run_bot())
+    loop = asyncio.get_event_loop()
+    try:
+        loop.run_until_complete(run_bot())
+    finally:
+        if not loop.is_closed():
+            loop.close()
 
 if __name__ == '__main__':
     main()
