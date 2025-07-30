@@ -9,7 +9,8 @@ from telegram import Bot
 
 # Настройка логирования
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
     raise ValueError("BOT_TOKEN not found in environment variables")
 
-GROUP_CHAT_ID = osქ0os.getenv("GROUP_CHAT_ID", "644710593")
+GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID", "644710593")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@shop_mrush1")
 
 START_HOUR = 8
@@ -309,7 +310,7 @@ async def callback_query_handler(update: Update, context: ContextTypes):
         user_id = query.from_user.id
         subscription_ok, subscription_msg = await check_subscription_and_block(context, user_id)
         if subscription_ok:
-            await query.edit_message_text("✅ Вы успешно подписаны на канал!")
+            await query.edit_message_text("✅ Вы успешно подписались на канал!")
             await send_welcome_message(context, query.message.chat_id)
         else:
             await query.edit_message_text(
@@ -324,41 +325,28 @@ async def error_handler(update: Update, context: ContextTypes):
     if str(context.error).startswith("Conflict"):
         logger.error("Conflict detected! Ensure only one bot instance is running. Check for local instances, multiple Render services, or other deployments using the same token.")
 
-async def run_bot():
-    # Удаление webhook перед запуском polling
-    try:
-        bot = Bot(token=TOKEN)
-        await bot.delete_webhook(drop_pending_updates=True)
-        logger.info("Webhook deleted successfully")
-    except Exception as e:
-        logger.error(f"Failed to delete webhook: {e}")
-
+def run_bot():
+    """Запуск бота с правильным управлением event loop."""
     application = Application.builder().token(TOKEN).build()
 
+    # Регистрация обработчиков
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(callback_query_handler))
     application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO | filters.Document.IMAGE, handle_message))
     application.add_error_handler(error_handler)
 
-    print("Бот запущен!")
+    # Настройка и запуск бота
     try:
-        await application.run_polling(
+        logger.info("Запуск бота...")
+        application.run_polling(
             drop_pending_updates=True,
             bootstrap_retries=3,
-            timeout=30,
-            close_loop=False
+            timeout=30
         )
     except Exception as e:
-        logger.error(f"Polling failed: {e}")
-        raise
-
-def main():
-    loop = asyncio.get_event_loop()
-    try:
-        loop.run_until_complete(run_bot())
+        logger.error(f"Ошибка при работе бота: {e}")
     finally:
-        if not loop.is_closed():
-            loop.close()
+        logger.info("Бот остановлен")
 
 if __name__ == '__main__':
-    main()
+    run_bot()
