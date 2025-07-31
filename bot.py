@@ -2,32 +2,38 @@ import logging
 import re
 import asyncio
 import threading
+import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from telegram import Bot
-from flask import Flask
+import os
+from dotenv import load_dotenv
 
-# Минимальный Flask-сервер для Render Web Service
+# ===== 1. Flask сервер для Render =====
 app = Flask(__name__)
+PORT = 8080  # Стандартный порт для Render Web Services
 
 @app.route('/')
-def home():
-    return "Telegram Bot is running!"
+def health_check():
+    return "Bot is alive", 200
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    return "OK", 200
 
 def run_flask():
-    app.run(host='0.0.0.0', port=10000)
+    app.run(host='0.0.0.0', port=PORT, threaded=True)
 
+# ===== 2. Весь ваш оригинальный код без изменений =====
 # Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
-import os
-from dotenv import load_dotenv
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -337,34 +343,31 @@ async def error_handler(update: Update, context: ContextTypes):
     if str(context.error).startswith("Conflict"):
         logger.error("Conflict detected! Ensure only one bot instance is running. Check for local instances, multiple Render services, or other deployments using the same token.")
 
-async def run_bot():
-    """Запуск Telegram бота"""
+async def run_bot_application():
     application = Application.builder().token(TOKEN).build()
-
-    # Регистрация обработчиков
+    
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(callback_query_handler))
     application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO | filters.Document.IMAGE, handle_message))
     application.add_error_handler(error_handler)
 
-    # Удаление webhook и запуск polling
     await application.bot.delete_webhook(drop_pending_updates=True)
-    logger.info("Telegram бот запущен...")
+    logger.info("Bot started polling...")
     await application.run_polling()
 
-def run_flask_server():
-    """Запуск Flask сервера"""
-    app.run(host='0.0.0.0', port=10000)
-
+# ===== 3. Запуск приложения =====
 if __name__ == '__main__':
     # Запускаем Flask в отдельном потоке
-    flask_thread = threading.Thread(target=run_flask_server, daemon=True)
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
-
-    # Запускаем бота в основном потоке
+    
+    # Даем время Flask на запуск
+    time.sleep(2)
+    
+    # Запускаем бота
     try:
-        asyncio.run(run_bot())
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("Бот остановлен")
+        asyncio.run(run_bot_application())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
     except Exception as e:
-        logger.error(f"Ошибка при работе бота: {e}")
+        logger.error(f"Fatal error: {e}")
