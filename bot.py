@@ -2,32 +2,27 @@ import logging
 import re
 import asyncio
 import threading
-import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from telegram import Bot
+from flask import Flask
 import os
 from dotenv import load_dotenv
 
 # ===== 1. Flask сервер для Render =====
 app = Flask(__name__)
-PORT = 8080  # Стандартный порт для Render Web Services
+PORT = 10000  # Рабочий порт для Render
 
 @app.route('/')
 def health_check():
-    return "Bot is alive", 200
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    return "OK", 200
+    return "Mrush1 Bot is running", 200
 
 def run_flask():
-    app.run(host='0.0.0.0', port=PORT, threaded=True)
+    app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
 
-# ===== 2. Весь ваш оригинальный код без изменений =====
+# ===== 2. Ваш оригинальный код без изменений =====
 # Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -343,7 +338,7 @@ async def error_handler(update: Update, context: ContextTypes):
     if str(context.error).startswith("Conflict"):
         logger.error("Conflict detected! Ensure only one bot instance is running. Check for local instances, multiple Render services, or other deployments using the same token.")
 
-async def run_bot_application():
+async def bot_main():
     application = Application.builder().token(TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
@@ -352,22 +347,24 @@ async def run_bot_application():
     application.add_error_handler(error_handler)
 
     await application.bot.delete_webhook(drop_pending_updates=True)
-    logger.info("Bot started polling...")
+    logger.info("Mrush1 Bot started polling...")
     await application.run_polling()
+
+def run_async_bot():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(bot_main())
+    except Exception as e:
+        logger.error(f"Bot error: {e}")
+    finally:
+        loop.close()
 
 # ===== 3. Запуск приложения =====
 if __name__ == '__main__':
     # Запускаем Flask в отдельном потоке
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
-    
-    # Даем время Flask на запуск
-    time.sleep(2)
-    
+
     # Запускаем бота
-    try:
-        asyncio.run(run_bot_application())
-    except KeyboardInterrupt:
-        logger.info("Bot stopped by user")
-    except Exception as e:
-        logger.error(f"Fatal error: {e}")
+    run_async_bot()
