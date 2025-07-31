@@ -7,6 +7,16 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKe
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from telegram import Bot
 
+from flask import Flask
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Telegram Bot is running!"
+
+def run_flask():
+    app.run(host='0.0.0.0', port=10000)
+
 # Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
