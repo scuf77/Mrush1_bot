@@ -1,13 +1,15 @@
 import logging
 import re
 import asyncio
+import threading
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from telegram import Bot
-
 from flask import Flask
+
+# Минимальный Flask-сервер для Render Web Service
 app = Flask(__name__)
 
 @app.route('/')
@@ -335,8 +337,8 @@ async def error_handler(update: Update, context: ContextTypes):
     if str(context.error).startswith("Conflict"):
         logger.error("Conflict detected! Ensure only one bot instance is running. Check for local instances, multiple Render services, or other deployments using the same token.")
 
-def run_bot():
-    """Запуск бота с правильным управлением event loop."""
+async def run_bot():
+    """Запуск Telegram бота"""
     application = Application.builder().token(TOKEN).build()
 
     # Регистрация обработчиков
@@ -345,18 +347,24 @@ def run_bot():
     application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO | filters.Document.IMAGE, handle_message))
     application.add_error_handler(error_handler)
 
-    # Настройка и запуск бота
-    try:
-        logger.info("Запуск бота...")
-        application.run_polling(
-            drop_pending_updates=True,
-            bootstrap_retries=3,
-            timeout=30
-        )
-    except Exception as e:
-        logger.error(f"Ошибка при работе бота: {e}")
-    finally:
-        logger.info("Бот остановлен")
+    # Удаление webhook и запуск polling
+    await application.bot.delete_webhook(drop_pending_updates=True)
+    logger.info("Telegram бот запущен...")
+    await application.run_polling()
+
+def run_flask_server():
+    """Запуск Flask сервера"""
+    app.run(host='0.0.0.0', port=10000)
 
 if __name__ == '__main__':
-    run_bot()
+    # Запускаем Flask в отдельном потоке
+    flask_thread = threading.Thread(target=run_flask_server, daemon=True)
+    flask_thread.start()
+
+    # Запускаем бота в основном потоке
+    try:
+        asyncio.run(run_bot())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Бот остановлен")
+    except Exception as e:
+        logger.error(f"Ошибка при работе бота: {e}")
