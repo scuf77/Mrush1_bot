@@ -2,7 +2,7 @@ import logging
 import re
 import asyncio
 import threading
-import time  # Добавлен импорт time
+import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
@@ -339,7 +339,7 @@ async def error_handler(update: Update, context: ContextTypes):
     if str(context.error).startswith("Conflict"):
         logger.error("Conflict detected! Ensure only one bot instance is running. Check for local instances, multiple Render services, or other deployments using the same token.")
 
-async def bot_main():
+async def run_bot():
     application = Application.builder().token(TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
@@ -347,33 +347,31 @@ async def bot_main():
     application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO | filters.Document.IMAGE, handle_message))
     application.add_error_handler(error_handler)
 
-    await application.bot.delete_webhook(drop_pending_updates=True)
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
+    
     logger.info("Mrush1 Bot started polling...")
-    await application.run_polling()
+    
+    # Бесконечный цикл, чтобы бот продолжал работать
+    while True:
+        await asyncio.sleep(3600)
 
-def run_async_bot():
+# ===== 3. Запуск приложения =====
+def main():
+    # Запускаем Flask в отдельном потоке
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+
+    # Запускаем бота в основном потоке
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        loop.run_until_complete(bot_main())
+        loop.run_until_complete(run_bot())
     except Exception as e:
         logger.error(f"Bot error: {e}")
     finally:
         loop.close()
 
-# ===== 3. Запуск приложения с минимальными изменениями =====
 if __name__ == '__main__':
-    # Запускаем Flask в отдельном потоке
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-
-    # Запускаем бота
-    bot_thread = threading.Thread(target=run_async_bot, daemon=True)
-    bot_thread.start()
-
-    # Главный поток просто ждет, чтобы приложение не завершалось
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        logger.info("Shutting down...")
+    main()
