@@ -2,6 +2,7 @@ import logging
 import re
 import asyncio
 import threading
+import time  # Добавлен импорт time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
@@ -13,7 +14,7 @@ from dotenv import load_dotenv
 
 # ===== 1. Flask сервер для Render =====
 app = Flask(__name__)
-PORT = 10000  # Рабочий порт для Render
+PORT = int(os.getenv("PORT", 10000))  # Берем порт из переменных окружения
 
 @app.route('/')
 def health_check():
@@ -22,7 +23,7 @@ def health_check():
 def run_flask():
     app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
 
-# ===== 2. Ваш оригинальный код без изменений =====
+# ===== 2. Ваш оригинальный код БЕЗ ИЗМЕНЕНИЙ =====
 # Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -360,11 +361,19 @@ def run_async_bot():
     finally:
         loop.close()
 
-# ===== 3. Запуск приложения =====
+# ===== 3. Запуск приложения с минимальными изменениями =====
 if __name__ == '__main__':
     # Запускаем Flask в отдельном потоке
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
 
     # Запускаем бота
-    run_async_bot()
+    bot_thread = threading.Thread(target=run_async_bot, daemon=True)
+    bot_thread.start()
+
+    # Главный поток просто ждет, чтобы приложение не завершалось
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        logger.info("Shutting down...")
