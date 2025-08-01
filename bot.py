@@ -1,28 +1,14 @@
 import logging
 import re
 import asyncio
-import threading
-import time
+import os
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
-from telegram import Bot
 from flask import Flask
-import os
 from dotenv import load_dotenv
 
-# ===== 1. Инициализация и переменные окружения =====
-load_dotenv()
-TOKEN = os.getenv("BOT_TOKEN") or os.environ.get("BOT_TOKEN")
-if not TOKEN:
-    raise ValueError("BOT_TOKEN не найден в переменных окружения!")
-
-GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID", "644710593")
-CHANNEL_ID = os.getenv("CHANNEL_ID", "@shop_mrush1")
-PORT = int(os.getenv("PORT", 8000))
-
-# ===== 2. Настройка Flask =====
+# Инициализация Flask для Railway
 app = Flask(__name__)
 
 @app.route('/')
@@ -30,14 +16,23 @@ def health_check():
     return "Mrush1 Bot is running", 200
 
 def run_flask():
-    app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
+    app.run(host='0.0.0.0', port=int(os.getenv("PORT", 8000)), debug=False, use_reloader=False)
 
-# ===== 3. Настройка бота =====
+# Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# Загрузка переменных окружения
+load_dotenv()
+TOKEN = os.getenv("BOT_TOKEN") or os.environ.get("BOT_TOKEN")
+if not TOKEN:
+    raise ValueError("BOT_TOKEN не найден в переменных окружения!")
+
+GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID", "644710593")
+CHANNEL_ID = os.getenv("CHANNEL_ID", "@shop_mrush1")
 
 START_HOUR = 8
 END_HOUR = 23
@@ -60,8 +55,7 @@ BACK_BUTTON = ReplyKeyboardMarkup(
 )
 
 def is_within_working_hours() -> bool:
-    now = datetime.now(ZoneInfo("Europe/Moscow")).hour
-    logger.info(f"Current server time: {datetime.now(ZoneInfo('Europe/Moscow'))}, Hour: {now}")
+    now = datetime.now().hour
     return START_HOUR <= now < END_HOUR
 
 async def check_subscription_and_block(context: ContextTypes, user_id: int) -> tuple[bool, str]:
@@ -141,7 +135,6 @@ def check_file_extension(file_name: str) -> bool:
     return file_name and any(file_name.lower().endswith(ext) for ext in ALLOWED_IMAGE_EXTENSIONS)
 
 async def start(update: Update, context: ContextTypes):
-    logger.info(f"/start от {update.effective_user.id}")
     if not is_within_working_hours():
         await update.message.reply_text("⏰ Бот работает с 8:00 до 23:00. Пожалуйста, напишите позже.")
         return
@@ -154,21 +147,21 @@ async def start(update: Update, context: ContextTypes):
         "📸 *Пример поста:*"
     )
 
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=greeting,
+        parse_mode="Markdown",
+        reply_markup=MAIN_MENU
+    )
+    
     try:
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=greeting,
-            parse_mode="Markdown",
-            reply_markup=MAIN_MENU
-        )
         with open("primerbot.jpg", "rb") as photo:
             await context.bot.send_photo(
                 chat_id=update.effective_chat.id,
                 photo=photo,
                 caption="Продам за 100₽\nКонтакты: @vardges_grigoryan"
             )
-    except Exception as e:
-        logger.error(f"Ошибка отправки: {e}")
+    except FileNotFoundError:
         await update.message.reply_text("⚠️ Не удалось отправить пример")
 
 async def contact_admin(update: Update, context: ContextTypes):
@@ -291,9 +284,11 @@ async def run_bot():
         await asyncio.sleep(3600)
 
 def main():
+    # Запуск Flask в отдельном потоке
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
 
+    # Запуск бота
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
@@ -304,4 +299,5 @@ def main():
         loop.close()
 
 if __name__ == '__main__':
+    import threading
     main()
