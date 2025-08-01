@@ -44,36 +44,83 @@ ALLOWED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif'}
 
 user_posts = {}
 
-# Глобальный флаг рабочего времени
-BOT_ACTIVE = False
-
-def check_working_hours():
-    """Проверяет, находится ли текущее время в рабочем интервале"""
-    global BOT_ACTIVE
-    now = datetime.now().time()
-    start_time = time(START_HOUR, 0)
-    end_time = time(END_HOUR, 0)
-    BOT_ACTIVE = start_time <= now < end_time
-    return BOT_ACTIVE
-
-async def notify_working_hours(update: Update):
-    """Уведомляет пользователя о нерабочем времени"""
-    current_time = datetime.now().strftime("%H:%M")
-    await update.message.reply_text(
-        f"⛔ Бот сейчас не работает!\n"
-        f"⌚ Режим работы: с {START_HOUR}:00 до {END_HOUR}:00\n"
-        f"⏱️ Текущее время: {current_time}\n\n"
-        f"Пожалуйста, вернитесь в рабочее время.",
-        reply_markup=ReplyKeyboardRemove()
-    )
-
-async def working_hours_middleware(update: Update, context: ContextTypes, handler):
-    """Middleware для проверки рабочего времени"""
-    if not check_working_hours():
-        await notify_working_hours(update)
-        return
+class BotScheduler:
+    def __init__(self):
+        self.application = None
+        self.updater = None
+        self.bot_active = False
     
-    return await handler(update, context)
+    def is_working_time(self):
+        """Проверяет, находится ли текущее время в рабочем интервале"""
+        now = datetime.now().time()
+        return time(START_HOUR, 0) <= now < time(END_HOUR, 0)
+    
+    async def manage_bot_state(self):
+        """Управляет состоянием бота в зависимости от времени"""
+        while True:
+            if self.is_working_time():
+                if not self.bot_active:
+                    await self.start_bot()
+            else:
+                if self.bot_active:
+                    await self.stop_bot()
+            await asyncio.sleep(60)
+    
+    async def start_bot(self):
+        """Запускает бота"""
+        self.application = Application.builder().token(TOKEN).build()
+        self.setup_handlers()
+        
+        await self.application.initialize()
+        await self.application.start()
+        self.updater = await self.application.updater.start_polling()
+        self.bot_active = True
+        logger.info("Бот запущен (рабочее время)")
+    
+    async def stop_bot(self):
+        """Останавливает бота"""
+        if self.updater:
+            await self.updater.stop()
+        if self.application:
+            await self.application.stop()
+            await self.application.shutdown()
+        self.bot_active = False
+        logger.info("Бот остановлен (нерабочее время)")
+    
+    def setup_handlers(self):
+        """Настройка обработчиков команд"""
+        # Добавляем middleware для проверки времени
+        self.application.add_handler(
+            MessageHandler(filters.ALL & ~filters.COMMAND, self.working_hours_middleware),
+            group=-1
+        )
+        
+        # Основные обработчики
+        self.application.add_handler(CommandHandler("start", self.start))
+        self.application.add_handler(CallbackQueryHandler(self.callback_query_handler))
+        self.application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO | filters.Document.IMAGE, self.handle_message))
+        self.application.add_error_handler(self.error_handler)
+    
+    async def working_hours_middleware(self, update: Update, context: ContextTypes):
+        """Middleware для проверки рабочего времени"""
+        if not self.is_working_time():
+            await self.notify_off_hours(update)
+            return
+        return await self.handle_message(update, context)
+    
+    async def notify_off_hours(self, update: Update):
+        """Уведомляет пользователя о нерабочем времени"""
+        current_time = datetime.now().strftime("%H:%M")
+        await update.message.reply_text(
+            f"⛔ Бот сейчас не работает!\n"
+            f"⌚ Режим работы: с {START_HOUR}:00 до {END_HOUR}:00\n"
+            f"⏱️ Текущее время: {current_time}\n\n"
+            f"Пожалуйста, вернитесь в рабочее время.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+
+# Создаем глобальный экземпляр планировщика
+bot_scheduler = BotScheduler()
 
 MAIN_MENU = ReplyKeyboardMarkup(
     keyboard=[
@@ -132,12 +179,15 @@ def check_message(text: str, user_username: str) -> tuple[bool, str]:
     text_lower = text.lower()
     user_username = user_username.lower() if user_username else ""
 
+    # Проверка на наличие хэштега #офтоп (в любом регистре)
     is_offtopic = any(hashtag in text_lower for hashtag in ['#офтоп', '#оффтоп'])
+
+    # Проверка наличия @username
     usernames = re.findall(r'@([a-zA-Z0-9_]{5,})', text)
-    
     if not usernames:
         return False, "❌ В сообщении отсутствует контактная информация (@username)."
 
+    # Проверка действия и привязок только если нет хэштега #офтоп
     if not is_offtopic:
         actions = ['продам', 'обмен', 'куплю', 'продаю', 'обменяю', 'покупка', 'продажа']
         if not any(action in text_lower for action in actions):
@@ -147,6 +197,7 @@ def check_message(text: str, user_username: str) -> tuple[bool, str]:
         if not any(keyword in text_lower for keyword in mail_keywords):
             return False, "❌ Укажите информацию о привязках."
 
+    # Остальные проверки выполняются всегда
     if sum(c.isupper() for c in text) / len(text) > 0.7 and len(text) > 10:
         return False, "❌ Слишком много текста в верхнем регистре (капс)."
 
@@ -338,31 +389,18 @@ async def error_handler(update: Update, context: ContextTypes):
     logger.error(f"Ошибка: {context.error}")
 
 async def run_bot():
-    # Инициализация времени при запуске
-    check_working_hours()
+    # Запускаем управление состоянием бота
+    asyncio.create_task(bot_scheduler.manage_bot_state())
     
-    application = Application.builder().token(TOKEN).build()
-    
-    # Добавляем middleware для всех обработчиков
-    application.add_handler(MessageHandler(filters.ALL, working_hours_middleware), group=-1)
-    application.add_handler(CallbackQueryHandler(working_hours_middleware), group=-1)
-    
-    # Основные обработчики
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(callback_query_handler))
-    application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO | filters.Document.IMAGE, handle_message))
-    application.add_error_handler(error_handler)
+    # Проверяем время при старте
+    if bot_scheduler.is_working_time():
+        await bot_scheduler.start_bot()
+    else:
+        logger.info("Бот запущен в нерабочее время - ожидание рабочего периода")
 
-    await application.initialize()
-    await application.start()
-    await application.updater.start_polling()
-    
-    logger.info(f"Бот запущен. Рабочее время: {START_HOUR}:00-{END_HOUR}:00")
-    
-    # Фоновый мониторинг времени
+    # Бесконечный цикл для поддержания работы приложения
     while True:
-        check_working_hours()
-        await asyncio.sleep(60)
+        await asyncio.sleep(3600)
 
 def main():
     # Запуск Flask в отдельном потоке
