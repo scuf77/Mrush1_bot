@@ -106,7 +106,7 @@ def check_message(text: str, user_username: str) -> tuple[bool, str]:
     user_username = user_username.lower() if user_username else ""
 
     # Проверка на наличие хэштега #офтоп (в любом регистре)
-    is_offtopic = any(hashtag in text_lower for hashtag in ['#офтоп', '#оффтоп', '#офтоп', '#оффтоп'])
+    is_offtopic = any(hashtag in text_lower for hashtag in ['#офтоп', '#оффтоп'])
 
     # Проверка наличия @username
     usernames = re.findall(r'@([a-zA-Z0-9_]{5,})', text)
@@ -119,7 +119,7 @@ def check_message(text: str, user_username: str) -> tuple[bool, str]:
         if not any(action in text_lower for action in actions):
             return False, "❌ Укажите действие: 'продам', 'обмен' или 'куплю'."
 
-        mail_keywords = ['почта', 'почту', 'указ', 'утер', 'утерь', 'утеря', 'оки', 'ок ру', 'ок.ру', 'одноклассники', 'спакес', 'однокласники', 'одноклассника', 'однокласника', 'одноклассников', 'однокласников']
+        mail_keywords = ['почта', 'почту', 'указ', 'утер', 'утерь', 'утеря', 'оки', 'ок ру', 'ок.ру', 'одноклассники', 'спакес', 'однокласники', 'одноклассника', 'однокласника', 'одноклассников', 'однокласников', 'спейсис', 'спакес', 'spaces']
         if not any(keyword in text_lower for keyword in mail_keywords):
             return False, "❌ Укажите информацию о привязках."
 
