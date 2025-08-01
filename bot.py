@@ -44,6 +44,37 @@ ALLOWED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif'}
 
 user_posts = {}
 
+# Глобальный флаг рабочего времени
+BOT_ACTIVE = False
+
+def check_working_hours():
+    """Проверяет, находится ли текущее время в рабочем интервале"""
+    global BOT_ACTIVE
+    now = datetime.now().time()
+    start_time = time(START_HOUR, 0)
+    end_time = time(END_HOUR, 0)
+    BOT_ACTIVE = start_time <= now < end_time
+    return BOT_ACTIVE
+
+async def notify_working_hours(update: Update):
+    """Уведомляет пользователя о нерабочем времени"""
+    current_time = datetime.now().strftime("%H:%M")
+    await update.message.reply_text(
+        f"⛔ Бот сейчас не работает!\n"
+        f"⌚ Режим работы: с {START_HOUR}:00 до {END_HOUR}:00\n"
+        f"⏱️ Текущее время: {current_time}\n\n"
+        f"Пожалуйста, вернитесь в рабочее время.",
+        reply_markup=ReplyKeyboardRemove()
+    )
+
+async def working_hours_middleware(update: Update, context: ContextTypes, handler):
+    """Middleware для проверки рабочего времени"""
+    if not check_working_hours():
+        await notify_working_hours(update)
+        return
+    
+    return await handler(update, context)
+
 MAIN_MENU = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton("🆘 Помощь")],
@@ -57,28 +88,6 @@ BACK_BUTTON = ReplyKeyboardMarkup(
     keyboard=[[KeyboardButton("🔙 Назад в меню")]],
     resize_keyboard=True
 )
-
-def is_within_working_hours() -> bool:
-    """Проверяет, находится ли текущее время в рабочем интервале"""
-    now = datetime.now().time()
-    start_time = time(START_HOUR, 0)
-    end_time = time(END_HOUR, 0)
-    return start_time <= now < end_time
-
-async def check_working_hours(update: Update) -> bool:
-    """Проверяет рабочее время и отправляет сообщение, если бот не работает"""
-    if is_within_working_hours():
-        return True
-    
-    current_time = datetime.now().strftime("%H:%M")
-    await update.message.reply_text(
-        f"⛔ Бот сейчас не работает!\n"
-        f"⌚ Режим работы: с {START_HOUR}:00 до {END_HOUR}:00\n"
-        f"⏱️ Текущее время: {current_time}\n\n"
-        f"Пожалуйста, вернитесь в рабочее время.",
-        reply_markup=ReplyKeyboardRemove()
-    )
-    return False
 
 async def check_subscription_and_block(context: ContextTypes, user_id: int) -> tuple[bool, str]:
     try:
@@ -123,15 +132,12 @@ def check_message(text: str, user_username: str) -> tuple[bool, str]:
     text_lower = text.lower()
     user_username = user_username.lower() if user_username else ""
 
-    # Проверка на наличие хэштега #офтоп (в любом регистре)
     is_offtopic = any(hashtag in text_lower for hashtag in ['#офтоп', '#оффтоп'])
-
-    # Проверка наличия @username
     usernames = re.findall(r'@([a-zA-Z0-9_]{5,})', text)
+    
     if not usernames:
         return False, "❌ В сообщении отсутствует контактная информация (@username)."
 
-    # Проверка действия и привязок только если нет хэштега #офтоп
     if not is_offtopic:
         actions = ['продам', 'обмен', 'куплю', 'продаю', 'обменяю', 'покупка', 'продажа']
         if not any(action in text_lower for action in actions):
@@ -141,15 +147,13 @@ def check_message(text: str, user_username: str) -> tuple[bool, str]:
         if not any(keyword in text_lower for keyword in mail_keywords):
             return False, "❌ Укажите информацию о привязках."
 
-    # Остальные проверки выполняются всегда
     if sum(c.isupper() for c in text) / len(text) > 0.7 and len(text) > 10:
         return False, "❌ Слишком много текста в верхнем регистре (капс)."
 
     if any(word in text_lower for word in FORBIDDEN_WORDS):
         return False, "❌ Обнаружен мат. Уберите его."
 
-    if re.search(r'(https?://|www\.|\.com|\.ru|\.org|t\.me/[a-zA-Z0-9_]+)', text) and not re.search(
-            r't\.me/shop_mrush1', text):
+    if re.search(r'(https?://|www\.|\.com|\.ru|\.org|t\.me/[a-zA-Z0-9_]+)', text) and not re.search(r't\.me/shop_mrush1', text):
         return False, "❌ Ссылки запрещены (кроме t.me/shop_mrush1)."
 
     if re.search(r'@[a-zA-Z0-9_]*bot\b', text_lower):
@@ -201,24 +205,15 @@ async def send_welcome_message(context: ContextTypes, chat_id: int):
         await context.bot.send_message(chat_id=chat_id, text="⚠️ Не удалось найти пример изображения.")
 
 async def start(update: Update, context: ContextTypes):
-    if not await check_working_hours(update):
-        return
-        
     await send_welcome_message(context, update.effective_chat.id)
 
 async def contact_admin(update: Update, context: ContextTypes):
-    if not await check_working_hours(update):
-        return
-
     await update.message.reply_text(
         "👨‍💻 Если у вас возникли вопросы — пишите администратору: @vardges_grigoryan",
         reply_markup=BACK_BUTTON
     )
 
 async def show_help(update: Update, context: ContextTypes):
-    if not await check_working_hours(update):
-        return
-
     help_text = (
         "📌 Как правильно подать объявление? Просто выполни несколько простых пунктов! ✅\n\n"
         "1. Подпишись на канал: @shop_mrush1\n"
@@ -237,9 +232,6 @@ async def show_help(update: Update, context: ContextTypes):
     await update.message.reply_text(help_text, reply_markup=BACK_BUTTON)
 
 async def handle_post(update: Update, context: ContextTypes):
-    if not await check_working_hours(update):
-        return
-
     user_id = update.message.from_user.id
     text = update.message.text or update.message.caption or ""
     user_username = update.message.from_user.username
@@ -306,9 +298,6 @@ async def handle_post(update: Update, context: ContextTypes):
         )
 
 async def handle_message(update: Update, context: ContextTypes):
-    if not await check_working_hours(update):
-        return
-
     text = update.message.text
     if text == "👨‍💻 Написать администратору":
         await contact_admin(update, context)
@@ -331,16 +320,6 @@ async def handle_message(update: Update, context: ContextTypes):
 async def callback_query_handler(update: Update, context: ContextTypes):
     query = update.callback_query
     await query.answer()
-    
-    if not is_within_working_hours():
-        current_time = datetime.now().strftime("%H:%M")
-        await query.edit_message_text(
-            f"⛔ Бот сейчас не работает!\n"
-            f"⌚ Режим работы: с {START_HOUR}:00 до {END_HOUR}:00\n"
-            f"⏱️ Текущее время: {current_time}"
-        )
-        return
-        
     if query.data == "check_subscription":
         user_id = query.from_user.id
         subscription_ok, subscription_msg = await check_subscription_and_block(context, user_id)
@@ -359,23 +338,16 @@ async def error_handler(update: Update, context: ContextTypes):
     logger.error(f"Ошибка: {context.error}")
 
 async def run_bot():
-    # Проверка времени при запуске
-    startup_time = datetime.now().time()
-    if not is_within_working_hours():
-        logger.warning(
-            f"Бот запущен вне рабочего времени! "
-            f"Текущее время: {startup_time.strftime('%H:%M')} "
-            f"(Рабочее время: {START_HOUR}:00-{END_HOUR}:00)"
-        )
-    else:
-        logger.info(
-            f"Бот запущен в рабочее время. "
-            f"Текущее время: {startup_time.strftime('%H:%M')}"
-        )
-
+    # Инициализация времени при запуске
+    check_working_hours()
+    
     application = Application.builder().token(TOKEN).build()
     
-    # Добавляем обработчики
+    # Добавляем middleware для всех обработчиков
+    application.add_handler(MessageHandler(filters.ALL, working_hours_middleware), group=-1)
+    application.add_handler(CallbackQueryHandler(working_hours_middleware), group=-1)
+    
+    # Основные обработчики
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(callback_query_handler))
     application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO | filters.Document.IMAGE, handle_message))
@@ -385,13 +357,11 @@ async def run_bot():
     await application.start()
     await application.updater.start_polling()
     
-    logger.info(f"Бот запущен в рабочем режиме с {START_HOUR}:00 до {END_HOUR}:00")
+    logger.info(f"Бот запущен. Рабочее время: {START_HOUR}:00-{END_HOUR}:00")
     
-    # Мониторинг времени работы
+    # Фоновый мониторинг времени
     while True:
-        now = datetime.now().time()
-        if now.hour == END_HOUR and now.minute == 0:
-            logger.info("Рабочее время закончилось, бот переходит в режим ожидания")
+        check_working_hours()
         await asyncio.sleep(60)
 
 def main():
