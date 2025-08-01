@@ -3,8 +3,8 @@ import re
 import asyncio
 import os
 import threading
-from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from datetime import datetime, timedelta, time
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from flask import Flask
 from dotenv import load_dotenv
@@ -35,8 +35,8 @@ if not TOKEN:
 GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID", "644710593")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@shop_mrush1")
 
-START_HOUR = 8
-END_HOUR = 23
+START_HOUR = 8  # 8:00 утра
+END_HOUR = 23   # 23:00 вечера
 
 FORBIDDEN_WORDS = {'сука', 'блять', 'пиздец', 'хуй', 'ебать'}
 
@@ -59,9 +59,26 @@ BACK_BUTTON = ReplyKeyboardMarkup(
 )
 
 def is_within_working_hours() -> bool:
-    now = datetime.now()
-    current_time = now.hour + now.minute/60  # Преобразуем в дробные часы (например, 23:30 = 23.5)
-    return START_HOUR <= current_time < END_HOUR
+    """Проверяет, находится ли текущее время в рабочем интервале"""
+    now = datetime.now().time()
+    start_time = time(START_HOUR, 0)
+    end_time = time(END_HOUR, 0)
+    return start_time <= now < end_time
+
+async def check_working_hours(update: Update) -> bool:
+    """Проверяет рабочее время и отправляет сообщение, если бот не работает"""
+    if is_within_working_hours():
+        return True
+    
+    current_time = datetime.now().strftime("%H:%M")
+    await update.message.reply_text(
+        f"⛔ Бот сейчас не работает!\n"
+        f"⌚ Режим работы: с {START_HOUR}:00 до {END_HOUR}:00\n"
+        f"⏱️ Текущее время: {current_time}\n\n"
+        f"Пожалуйста, вернитесь в рабочее время.",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    return False
 
 async def check_subscription_and_block(context: ContextTypes, user_id: int) -> tuple[bool, str]:
     try:
@@ -184,21 +201,13 @@ async def send_welcome_message(context: ContextTypes, chat_id: int):
         await context.bot.send_message(chat_id=chat_id, text="⚠️ Не удалось найти пример изображения.")
 
 async def start(update: Update, context: ContextTypes):
-    if not is_within_working_hours():
-        current_time = datetime.now().strftime("%H:%M")
-        await update.message.reply_text(
-            f"⏰ Бот работает с {START_HOUR}:00 до {END_HOUR}:00. "
-            f"Сейчас {current_time}. Пожалуйста, напишите позже."
-        )
+    if not await check_working_hours(update):
         return
         
     await send_welcome_message(context, update.effective_chat.id)
 
-    await send_welcome_message(context, update.effective_chat.id)
-
 async def contact_admin(update: Update, context: ContextTypes):
-    if not is_within_working_hours():
-        await update.message.reply_text("⏰ Бот работает с 8:00 до 23:00. Пожалуйста, напишите позже.")
+    if not await check_working_hours(update):
         return
 
     await update.message.reply_text(
@@ -207,8 +216,7 @@ async def contact_admin(update: Update, context: ContextTypes):
     )
 
 async def show_help(update: Update, context: ContextTypes):
-    if not is_within_working_hours():
-        await update.message.reply_text("⏰ Бот работает с 8:00 до 23:00. Пожалуйста, напишите позже.")
+    if not await check_working_hours(update):
         return
 
     help_text = (
@@ -228,14 +236,13 @@ async def show_help(update: Update, context: ContextTypes):
 
     await update.message.reply_text(help_text, reply_markup=BACK_BUTTON)
 
-async def some_handler(update: Update, context: ContextTypes):
-    if not is_within_working_hours():
-        current_time = datetime.now().strftime("%H:%M")
-        await update.message.reply_text(
-            f"⏰ Бот работает с {START_HOUR}:00 до {END_HOUR}:00. "
-            f"Сейчас {current_time}. Пожалуйста, напишите завтра с {START_HOUR}:00."
-        )
+async def handle_post(update: Update, context: ContextTypes):
+    if not await check_working_hours(update):
         return
+
+    user_id = update.message.from_user.id
+    text = update.message.text or update.message.caption or ""
+    user_username = update.message.from_user.username
 
     subscription_ok, subscription_msg = await check_subscription_and_block(context, user_id)
     if not subscription_ok:
@@ -299,6 +306,9 @@ async def some_handler(update: Update, context: ContextTypes):
         )
 
 async def handle_message(update: Update, context: ContextTypes):
+    if not await check_working_hours(update):
+        return
+
     text = update.message.text
     if text == "👨‍💻 Написать администратору":
         await contact_admin(update, context)
@@ -313,7 +323,6 @@ async def handle_message(update: Update, context: ContextTypes):
         )
         context.user_data['awaiting_post'] = True
     elif context.user_data.get('awaiting_post', False):
-        # Обработка текста, фото или документа
         await handle_post(update, context)
         context.user_data['awaiting_post'] = False
     else:
@@ -322,6 +331,16 @@ async def handle_message(update: Update, context: ContextTypes):
 async def callback_query_handler(update: Update, context: ContextTypes):
     query = update.callback_query
     await query.answer()
+    
+    if not is_within_working_hours():
+        current_time = datetime.now().strftime("%H:%M")
+        await query.edit_message_text(
+            f"⛔ Бот сейчас не работает!\n"
+            f"⌚ Режим работы: с {START_HOUR}:00 до {END_HOUR}:00\n"
+            f"⏱️ Текущее время: {current_time}"
+        )
+        return
+        
     if query.data == "check_subscription":
         user_id = query.from_user.id
         subscription_ok, subscription_msg = await check_subscription_and_block(context, user_id)
@@ -340,8 +359,23 @@ async def error_handler(update: Update, context: ContextTypes):
     logger.error(f"Ошибка: {context.error}")
 
 async def run_bot():
+    # Проверка времени при запуске
+    startup_time = datetime.now().time()
+    if not is_within_working_hours():
+        logger.warning(
+            f"Бот запущен вне рабочего времени! "
+            f"Текущее время: {startup_time.strftime('%H:%M')} "
+            f"(Рабочее время: {START_HOUR}:00-{END_HOUR}:00)"
+        )
+    else:
+        logger.info(
+            f"Бот запущен в рабочее время. "
+            f"Текущее время: {startup_time.strftime('%H:%M')}"
+        )
+
     application = Application.builder().token(TOKEN).build()
     
+    # Добавляем обработчики
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(callback_query_handler))
     application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO | filters.Document.IMAGE, handle_message))
@@ -351,9 +385,14 @@ async def run_bot():
     await application.start()
     await application.updater.start_polling()
     
-    logger.info("Бот запущен")
+    logger.info(f"Бот запущен в рабочем режиме с {START_HOUR}:00 до {END_HOUR}:00")
+    
+    # Мониторинг времени работы
     while True:
-        await asyncio.sleep(3600)
+        now = datetime.now().time()
+        if now.hour == END_HOUR and now.minute == 0:
+            logger.info("Рабочее время закончилось, бот переходит в режим ожидания")
+        await asyncio.sleep(60)
 
 def main():
     # Запуск Flask в отдельном потоке
