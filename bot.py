@@ -36,7 +36,7 @@ GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID", "644710593")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@shop_mrush1")
 
 START_HOUR = 8
-END_HOUR = 22
+END_HOUR = 23
 
 FORBIDDEN_WORDS = {'сука', 'блять', 'пиздец', 'хуй', 'ебать'}
 
@@ -59,8 +59,9 @@ BACK_BUTTON = ReplyKeyboardMarkup(
 )
 
 def is_within_working_hours() -> bool:
-    now = datetime.now().hour
-    return START_HOUR <= now < END_HOUR
+    now = datetime.now()
+    current_time = now.hour + now.minute/60  # Преобразуем в дробные часы (например, 23:30 = 23.5)
+    return START_HOUR <= current_time < END_HOUR
 
 async def check_subscription_and_block(context: ContextTypes, user_id: int) -> tuple[bool, str]:
     try:
@@ -184,8 +185,14 @@ async def send_welcome_message(context: ContextTypes, chat_id: int):
 
 async def start(update: Update, context: ContextTypes):
     if not is_within_working_hours():
-        await update.message.reply_text("⏰ Бот работает с 8:00 до 23:00. Пожалуйста, напишите позже.")
+        current_time = datetime.now().strftime("%H:%M")
+        await update.message.reply_text(
+            f"⏰ Бот работает с {START_HOUR}:00 до {END_HOUR}:00. "
+            f"Сейчас {current_time}. Пожалуйста, напишите позже."
+        )
         return
+        
+    await send_welcome_message(context, update.effective_chat.id)
 
     await send_welcome_message(context, update.effective_chat.id)
 
@@ -221,13 +228,13 @@ async def show_help(update: Update, context: ContextTypes):
 
     await update.message.reply_text(help_text, reply_markup=BACK_BUTTON)
 
-async def handle_post(update: Update, context: ContextTypes):
-    user_id = update.message.from_user.id
-    text = update.message.text or update.message.caption or ""
-    user_username = update.message.from_user.username
-
+async def some_handler(update: Update, context: ContextTypes):
     if not is_within_working_hours():
-        await update.message.reply_text("⏰ Бот работает с 8:00 до 23:00. Пожалуйста, напишите позже.")
+        current_time = datetime.now().strftime("%H:%M")
+        await update.message.reply_text(
+            f"⏰ Бот работает с {START_HOUR}:00 до {END_HOUR}:00. "
+            f"Сейчас {current_time}. Пожалуйста, напишите завтра с {START_HOUR}:00."
+        )
         return
 
     subscription_ok, subscription_msg = await check_subscription_and_block(context, user_id)
