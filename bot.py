@@ -35,8 +35,8 @@ if not TOKEN:
 GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID", "644710593")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@shop_mrush1")
 
-START_HOUR = 8
-END_HOUR = 23
+START_HOUR = 5
+END_HOUR = 20
 
 FORBIDDEN_WORDS = {'сука', 'блять', 'пиздец', 'хуй', 'ебать'}
 
