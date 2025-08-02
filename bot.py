@@ -3,8 +3,8 @@ import re
 import asyncio
 import os
 import threading
-from datetime import datetime, timedelta, time
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from datetime import datetime, timedelta
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from flask import Flask
 from dotenv import load_dotenv
@@ -35,92 +35,14 @@ if not TOKEN:
 GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID", "644710593")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@shop_mrush1")
 
-START_HOUR = 8  # 8:00 утра
-END_HOUR = 23   # 23:00 вечера
+START_HOUR = 8
+END_HOUR = 23
 
 FORBIDDEN_WORDS = {'сука', 'блять', 'пиздец', 'хуй', 'ебать'}
 
 ALLOWED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif'}
 
 user_posts = {}
-
-class BotScheduler:
-    def __init__(self):
-        self.application = None
-        self.updater = None
-        self.bot_active = False
-    
-    def is_working_time(self):
-        """Проверяет, находится ли текущее время в рабочем интервале"""
-        now = datetime.now().time()
-        return time(START_HOUR, 0) <= now < time(END_HOUR, 0)
-    
-    async def manage_bot_state(self):
-        """Управляет состоянием бота в зависимости от времени"""
-        while True:
-            if self.is_working_time():
-                if not self.bot_active:
-                    await self.start_bot()
-            else:
-                if self.bot_active:
-                    await self.stop_bot()
-            await asyncio.sleep(60)
-    
-    async def start_bot(self):
-        """Запускает бота"""
-        self.application = Application.builder().token(TOKEN).build()
-        self.setup_handlers()
-        
-        await self.application.initialize()
-        await self.application.start()
-        self.updater = await self.application.updater.start_polling()
-        self.bot_active = True
-        logger.info("Бот запущен (рабочее время)")
-    
-    async def stop_bot(self):
-        """Останавливает бота"""
-        if self.updater:
-            await self.updater.stop()
-        if self.application:
-            await self.application.stop()
-            await self.application.shutdown()
-        self.bot_active = False
-        logger.info("Бот остановлен (нерабочее время)")
-    
-    def setup_handlers(self):
-        """Настройка обработчиков команд"""
-        # Добавляем middleware для проверки времени
-        self.application.add_handler(
-            MessageHandler(filters.ALL & ~filters.COMMAND, self.working_hours_middleware),
-            group=-1
-        )
-        
-        # Основные обработчики
-        self.application.add_handler(CommandHandler("start", self.start))
-        self.application.add_handler(CallbackQueryHandler(self.callback_query_handler))
-        self.application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO | filters.Document.IMAGE, self.handle_message))
-        self.application.add_error_handler(self.error_handler)
-    
-    async def working_hours_middleware(self, update: Update, context: ContextTypes):
-        """Middleware для проверки рабочего времени"""
-        if not self.is_working_time():
-            await self.notify_off_hours(update)
-            return
-        return await self.handle_message(update, context)
-    
-    async def notify_off_hours(self, update: Update):
-        """Уведомляет пользователя о нерабочем времени"""
-        current_time = datetime.now().strftime("%H:%M")
-        await update.message.reply_text(
-            f"⛔ Бот сейчас не работает!\n"
-            f"⌚ Режим работы: с {START_HOUR}:00 до {END_HOUR}:00\n"
-            f"⏱️ Текущее время: {current_time}\n\n"
-            f"Пожалуйста, вернитесь в рабочее время.",
-            reply_markup=ReplyKeyboardRemove()
-        )
-
-# Создаем глобальный экземпляр планировщика
-bot_scheduler = BotScheduler()
 
 MAIN_MENU = ReplyKeyboardMarkup(
     keyboard=[
@@ -135,6 +57,11 @@ BACK_BUTTON = ReplyKeyboardMarkup(
     keyboard=[[KeyboardButton("🔙 Назад в меню")]],
     resize_keyboard=True
 )
+
+def is_within_working_hours() -> bool:
+    now = datetime.now()
+    current_time = now.hour + now.minute/60  # Преобразуем в дробные часы (например, 23:30 = 23.5)
+    return START_HOUR <= current_time < END_HOUR
 
 async def check_subscription_and_block(context: ContextTypes, user_id: int) -> tuple[bool, str]:
     try:
@@ -204,7 +131,8 @@ def check_message(text: str, user_username: str) -> tuple[bool, str]:
     if any(word in text_lower for word in FORBIDDEN_WORDS):
         return False, "❌ Обнаружен мат. Уберите его."
 
-    if re.search(r'(https?://|www\.|\.com|\.ru|\.org|t\.me/[a-zA-Z0-9_]+)', text) and not re.search(r't\.me/shop_mrush1', text):
+    if re.search(r'(https?://|www\.|\.com|\.ru|\.org|t\.me/[a-zA-Z0-9_]+)', text) and not re.search(
+            r't\.me/shop_mrush1', text):
         return False, "❌ Ссылки запрещены (кроме t.me/shop_mrush1)."
 
     if re.search(r'@[a-zA-Z0-9_]*bot\b', text_lower):
@@ -256,15 +184,33 @@ async def send_welcome_message(context: ContextTypes, chat_id: int):
         await context.bot.send_message(chat_id=chat_id, text="⚠️ Не удалось найти пример изображения.")
 
 async def start(update: Update, context: ContextTypes):
+    if not is_within_working_hours():
+        current_time = datetime.now().strftime("%H:%M")
+        await update.message.reply_text(
+            f"⏰ Бот работает с {START_HOUR}:00 до {END_HOUR}:00. "
+            f"Сейчас {current_time}. Пожалуйста, напишите позже."
+        )
+        return
+        
+    await send_welcome_message(context, update.effective_chat.id)
+
     await send_welcome_message(context, update.effective_chat.id)
 
 async def contact_admin(update: Update, context: ContextTypes):
+    if not is_within_working_hours():
+        await update.message.reply_text("⏰ Бот работает с 8:00 до 23:00. Пожалуйста, напишите позже.")
+        return
+
     await update.message.reply_text(
         "👨‍💻 Если у вас возникли вопросы — пишите администратору: @vardges_grigoryan",
         reply_markup=BACK_BUTTON
     )
 
 async def show_help(update: Update, context: ContextTypes):
+    if not is_within_working_hours():
+        await update.message.reply_text("⏰ Бот работает с 8:00 до 23:00. Пожалуйста, напишите позже.")
+        return
+
     help_text = (
         "📌 Как правильно подать объявление? Просто выполни несколько простых пунктов! ✅\n\n"
         "1. Подпишись на канал: @shop_mrush1\n"
@@ -282,10 +228,14 @@ async def show_help(update: Update, context: ContextTypes):
 
     await update.message.reply_text(help_text, reply_markup=BACK_BUTTON)
 
-async def handle_post(update: Update, context: ContextTypes):
-    user_id = update.message.from_user.id
-    text = update.message.text or update.message.caption or ""
-    user_username = update.message.from_user.username
+async def some_handler(update: Update, context: ContextTypes):
+    if not is_within_working_hours():
+        current_time = datetime.now().strftime("%H:%M")
+        await update.message.reply_text(
+            f"⏰ Бот работает с {START_HOUR}:00 до {END_HOUR}:00. "
+            f"Сейчас {current_time}. Пожалуйста, напишите завтра с {START_HOUR}:00."
+        )
+        return
 
     subscription_ok, subscription_msg = await check_subscription_and_block(context, user_id)
     if not subscription_ok:
@@ -363,6 +313,7 @@ async def handle_message(update: Update, context: ContextTypes):
         )
         context.user_data['awaiting_post'] = True
     elif context.user_data.get('awaiting_post', False):
+        # Обработка текста, фото или документа
         await handle_post(update, context)
         context.user_data['awaiting_post'] = False
     else:
@@ -389,16 +340,18 @@ async def error_handler(update: Update, context: ContextTypes):
     logger.error(f"Ошибка: {context.error}")
 
 async def run_bot():
-    # Запускаем управление состоянием бота
-    asyncio.create_task(bot_scheduler.manage_bot_state())
+    application = Application.builder().token(TOKEN).build()
     
-    # Проверяем время при старте
-    if bot_scheduler.is_working_time():
-        await bot_scheduler.start_bot()
-    else:
-        logger.info("Бот запущен в нерабочее время - ожидание рабочего периода")
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(callback_query_handler))
+    application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO | filters.Document.IMAGE, handle_message))
+    application.add_error_handler(error_handler)
 
-    # Бесконечный цикл для поддержания работы приложения
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
+    
+    logger.info("Бот запущен")
     while True:
         await asyncio.sleep(3600)
 
