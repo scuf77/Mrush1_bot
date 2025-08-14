@@ -33,9 +33,9 @@ if not TOKEN:
     raise ValueError("BOT_TOKEN не найден в переменных окружения!")
 
 GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID", "644710593")
-CHANNEL_ID = os.getenv("CHANNEL_ID", "@shop_mrush1")
+CHANNEL_ID = os.getenv("CHANNEL_ID", "@ww3mrbot")
 
-START_HOUR = 5
+START_HOUR = 1
 END_HOUR = 20
 
 FORBIDDEN_WORDS = {'сука', 'блять', 'пиздец', 'хуй', 'ебать'}
@@ -191,9 +191,6 @@ async def start(update: Update, context: ContextTypes):
             f"Сейчас {current_time}. Пожалуйста, напишите позже."
         )
         return
-        
-    await send_welcome_message(context, update.effective_chat.id)
-
     await send_welcome_message(context, update.effective_chat.id)
 
 async def contact_admin(update: Update, context: ContextTypes):
@@ -228,12 +225,48 @@ async def show_help(update: Update, context: ContextTypes):
 
     await update.message.reply_text(help_text, reply_markup=BACK_BUTTON)
 
-async def some_handler(update: Update, context: ContextTypes):
+
+async def handle_message(update: Update, context: ContextTypes):
+    text = update.message.text
+    if text == "👨‍💻 Написать администратору":
+        await contact_admin(update, context)
+    elif text == "🆘 Помощь":
+        await show_help(update, context)
+    elif text == "🔙 Назад в меню":
+        await update.message.reply_text("🏠 Главное меню:", reply_markup=MAIN_MENU)
+    elif text == "📤 Разместить объявление":
+        await update.message.reply_text(
+            "📝 Отправьте текст вашего объявления и, при желании, прикрепите фото Вашего аккаунта.",
+            reply_markup=BACK_BUTTON
+        )
+        context.user_data['awaiting_post'] = True
+    elif context.user_data.get('awaiting_post', False):
+        # Обработка текста, фото или документа
+        await handle_post(update, context)
+        context.user_data['awaiting_post'] = False
+    else:
+        await update.message.reply_text("🔄 Пожалуйста, выберите действие 👇", reply_markup=MAIN_MENU)
+
+async def handle_post(update: Update, context: ContextTypes):
     if not is_within_working_hours():
         current_time = datetime.now().strftime("%H:%M")
         await update.message.reply_text(
             f"⏰ Бот работает с {START_HOUR}:00 до {END_HOUR}:00. "
-            f"Сейчас {current_time}. Пожалуйста, напишите завтра с {START_HOUR}:00."
+            f"Сейчас {current_time}. Пожалуйста, напишите позже.",
+            reply_markup=MAIN_MENU
+        )
+        return
+
+    user_id = update.effective_user.id if update.effective_user else None
+    user_username = update.effective_user.username if update.effective_user else ""
+
+    # Текст может быть в caption (для фото/документа) или в text
+    text = (update.message.caption or update.message.text or "").strip()
+
+    if not text:
+        await update.message.reply_text(
+            "❌ Пожалуйста, отправьте текст объявления (можно с фото/документом одним сообщением).",
+            reply_markup=BACK_BUTTON
         )
         return
 
@@ -297,27 +330,6 @@ async def some_handler(update: Update, context: ContextTypes):
             "❌ Произошла ошибка при публикации объявления. Попробуйте позже.",
             reply_markup=MAIN_MENU
         )
-
-async def handle_message(update: Update, context: ContextTypes):
-    text = update.message.text
-    if text == "👨‍💻 Написать администратору":
-        await contact_admin(update, context)
-    elif text == "🆘 Помощь":
-        await show_help(update, context)
-    elif text == "🔙 Назад в меню":
-        await update.message.reply_text("🏠 Главное меню:", reply_markup=MAIN_MENU)
-    elif text == "📤 Разместить объявление":
-        await update.message.reply_text(
-            "📝 Отправьте текст вашего объявления и, при желании, прикрепите фото Вашего аккаунта.",
-            reply_markup=BACK_BUTTON
-        )
-        context.user_data['awaiting_post'] = True
-    elif context.user_data.get('awaiting_post', False):
-        # Обработка текста, фото или документа
-        await handle_post(update, context)
-        context.user_data['awaiting_post'] = False
-    else:
-        await update.message.reply_text("🔄 Пожалуйста, выберите действие 👇", reply_markup=MAIN_MENU)
 
 async def callback_query_handler(update: Update, context: ContextTypes):
     query = update.callback_query
