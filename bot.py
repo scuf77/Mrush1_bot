@@ -9,7 +9,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from flask import Flask
 from dotenv import load_dotenv
 
-# Инициализация Flask для Railway
+# ---------- Flask (healthcheck для хостинга) ----------
 app = Flask(__name__)
 
 @app.route('/')
@@ -19,14 +19,14 @@ def health_check():
 def run_flask():
     app.run(host='0.0.0.0', port=int(os.getenv("PORT", 8000)), debug=False, use_reloader=False)
 
-# Настройка логирования
+# ---------- Логирование ----------
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Загрузка переменных окружения
+# ---------- Конфигурация ----------
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN") or os.environ.get("BOT_TOKEN")
 if not TOKEN:
@@ -35,13 +35,14 @@ if not TOKEN:
 GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID", "644710593")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@shop_mrush1")
 
+# Единые рабочие часы
 START_HOUR = 5
 END_HOUR = 20
 
 FORBIDDEN_WORDS = {'сука', 'блять', 'пиздец', 'хуй', 'ебать'}
-
 ALLOWED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif'}
 
+# Память на процесс (после рестарта обнуляется — это ок)
 user_posts = {}
 
 MAIN_MENU = ReplyKeyboardMarkup(
@@ -60,10 +61,10 @@ BACK_BUTTON = ReplyKeyboardMarkup(
 
 def is_within_working_hours() -> bool:
     now = datetime.now()
-    current_time = now.hour + now.minute/60  # Преобразуем в дробные часы (например, 23:30 = 23.5)
+    current_time = now.hour + now.minute / 60
     return START_HOUR <= current_time < END_HOUR
 
-async def check_subscription_and_block(context: ContextTypes, user_id: int) -> tuple[bool, str]:
+async def check_subscription_and_block(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> tuple[bool, str]:
     try:
         member = await context.bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
         if member.status == 'kicked':
@@ -83,7 +84,7 @@ def check_post_limit_and_duplicates(user_id: int, text: str) -> tuple[bool, str]
     if now.date() != user_data["date"].date():
         user_posts[user_id] = {"posts": [], "count": 0, "date": now}
 
-    if user_data["count"] >= 3:
+    if user_posts[user_id]["count"] >= 3:
         return False, "❌ Вы превысили лимит в 3 поста за сутки. Попробуйте завтра."
 
     for post, post_time in user_data["posts"]:
@@ -104,35 +105,34 @@ def add_successful_post(user_id: int, text: str):
 
 def check_message(text: str, user_username: str) -> tuple[bool, str]:
     text_lower = text.lower()
-    user_username = user_username.lower() if user_username else ""
+    user_username = (user_username or "").lower()
 
-    # Проверка на наличие хэштега #офтоп (в любом регистре)
+    # #офтоп / #оффтоп разрешает пропускать часть проверок
     is_offtopic = any(hashtag in text_lower for hashtag in ['#офтоп', '#оффтоп'])
 
-    # Проверка наличия @username
     usernames = re.findall(r'@([a-zA-Z0-9_]{5,})', text)
     if not usernames:
         return False, "❌ В сообщении отсутствует контактная информация (@username)."
 
-    # Проверка действия и привязок только если нет хэштега #офтоп
     if not is_offtopic:
         actions = ['продам', 'обмен', 'куплю', 'продаю', 'обменяю', 'покупка', 'продажа']
         if not any(action in text_lower for action in actions):
             return False, "❌ Укажите действие: 'продам', 'обмен' или 'куплю'."
 
-        mail_keywords = ['почта', 'почту', 'почты', 'указ', 'утер', 'утерь', 'утеря', 'оки', 'ок ру', 'ок.ру', 'одноклассники', 'спакес', 'однокласники', 'одноклассника', 'однокласника', 'одноклассников', 'однокласников', 'спейсис', 'спакес', 'spaces']
+        mail_keywords = ['почта', 'почту', 'почты', 'указ', 'утер', 'утерь', 'утеря',
+                         'оки', 'ок ру', 'ок.ру', 'одноклассники', 'спакес', 'однокласники',
+                         'одноклассника', 'однокласника', 'одноклассников', 'однокласников',
+                         'спейсис', 'спакес', 'spaces']
         if not any(keyword in text_lower for keyword in mail_keywords):
             return False, "❌ Укажите информацию о привязках."
 
-    # Остальные проверки выполняются всегда
-    if sum(c.isupper() for c in text) / len(text) > 0.7 and len(text) > 10:
+    if len(text) > 10 and (sum(c.isupper() for c in text) / len(text) > 0.7):
         return False, "❌ Слишком много текста в верхнем регистре (капс)."
 
     if any(word in text_lower for word in FORBIDDEN_WORDS):
         return False, "❌ Обнаружен мат. Уберите его."
 
-    if re.search(r'(https?://|www\.|\.com|\.ru|\.org|t\.me/[a-zA-Z0-9_]+)', text) and not re.search(
-            r't\.me/shop_mrush1', text):
+    if re.search(r'(https?://|www\.|\.com|\.ru|\.org|t\.me/[a-zA-Z0-9_]+)', text) and not re.search(r't\.me/shop_mrush1', text):
         return False, "❌ Ссылки запрещены (кроме t.me/shop_mrush1)."
 
     if re.search(r'@[a-zA-Z0-9_]*bot\b', text_lower):
@@ -152,7 +152,7 @@ def check_file_extension(file_name: str) -> bool:
         return False
     return any(file_name.lower().endswith(ext) for ext in ALLOWED_IMAGE_EXTENSIONS)
 
-async def send_welcome_message(context: ContextTypes, chat_id: int):
+async def send_welcome_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     greeting = (
         "🤖 *Привет, я Mrush1* — бот для размещения объявлений о *покупке, продаже и обмене игровых аккаунтов*!\n\n"
         "📌 Ознакомься с правилами:\n"
@@ -183,32 +183,107 @@ async def send_welcome_message(context: ContextTypes, chat_id: int):
     except FileNotFoundError:
         await context.bot.send_message(chat_id=chat_id, text="⚠️ Не удалось найти пример изображения.")
 
-async def start(update: Update, context: ContextTypes):
+# ---------- ПОСТИНГ ----------
+async def handle_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Единая обработка объявления (текст + опционально фото/док)."""
+    msg = update.message
+    user = msg.from_user
+    user_id = user.id
+    user_username = user.username or ""
+
+    # текст объявления берём из text или caption
+    text = (msg.text or msg.caption or "").strip()
+
+    if not is_within_working_hours():
+        current_time = datetime.now().strftime("%H:%M")
+        await msg.reply_text(
+            f"⏰ Бот работает с {START_HOUR}:00 до {END_HOUR}:00. "
+            f"Сейчас {current_time}. Пожалуйста, напишите завтра с {START_HOUR}:00.",
+            reply_markup=MAIN_MENU
+        )
+        return
+
+    # проверка подписки
+    subscription_ok, subscription_msg = await check_subscription_and_block(context, user_id)
+    if not subscription_ok:
+        await msg.reply_text(
+            f"{subscription_msg if subscription_msg else f'❌ Чтобы опубликовать объявление, подпишитесь на канал {CHANNEL_ID}!'}\n"
+            "Нажмите кнопку ниже, чтобы проверить подписку:",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("Проверить подписку", callback_data="check_subscription")]]
+            )
+        )
+        return
+
+    # must have text (для фото без подписи)
+    if not text:
+        await msg.reply_text("❌ Добавьте текст объявления (можно как подпись к фото).", reply_markup=MAIN_MENU)
+        return
+
+    # лимит и дубликаты
+    limit_ok, limit_msg = check_post_limit_and_duplicates(user_id, text)
+    if not limit_ok:
+        await msg.reply_text(limit_msg, reply_markup=MAIN_MENU)
+        return
+
+    # правила
+    content_ok, content_msg = check_message(text, user_username)
+    if not content_ok:
+        await msg.reply_text(content_msg, reply_markup=MAIN_MENU)
+        return
+
+    # Вложение
+    photos = msg.photo or []
+    document = msg.document
+
+    if document and not check_file_extension(document.file_name):
+        await msg.reply_text(
+            "❌ Прикреплены недопустимые файлы. Разрешены только изображения (JPG, JPEG, PNG, GIF).",
+            reply_markup=MAIN_MENU
+        )
+        return
+
+    try:
+        if photos:
+            # отправляем самое крупное фото
+            await context.bot.send_photo(chat_id=CHANNEL_ID, photo=photos[-1].file_id, caption=text)
+        elif document:
+            await context.bot.send_document(chat_id=CHANNEL_ID, document=document.file_id, caption=text)
+        else:
+            await context.bot.send_message(chat_id=CHANNEL_ID, text=text)
+
+        add_successful_post(user_id, text)
+        await msg.reply_text("✅ Ваше объявление успешно опубликовано!", reply_markup=MAIN_MENU)
+    except Exception as e:
+        logger.exception(f"Ошибка при публикации объявления: {e}")
+        await msg.reply_text("❌ Произошла ошибка при публикации объявления. Попробуйте позже.", reply_markup=MAIN_MENU)
+
+# ---------- Команды / колбэки / сообщения ----------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_within_working_hours():
         current_time = datetime.now().strftime("%H:%M")
         await update.message.reply_text(
-            f"⏰ Бот работает с {START_HOUR}:00 до {END_HOUR}:00. "
-            f"Сейчас {current_time}. Пожалуйста, напишите позже."
+            f"⏰ Бот работает с {START_HOUR}:00 до {END_HOUR}:00. Сейчас {current_time}. Пожалуйста, напишите позже."
         )
         return
-        
     await send_welcome_message(context, update.effective_chat.id)
 
-    await send_welcome_message(context, update.effective_chat.id)
-
-async def contact_admin(update: Update, context: ContextTypes):
+async def contact_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_within_working_hours():
-        await update.message.reply_text("⏰ Бот работает с 8:00 до 23:00. Пожалуйста, напишите позже.")
+        await update.message.reply_text(
+            f"⏰ Бот работает с {START_HOUR}:00 до {END_HOUR}:00. Пожалуйста, напишите позже."
+        )
         return
-
     await update.message.reply_text(
         "👨‍💻 Если у вас возникли вопросы — пишите администратору: @vardges_grigoryan",
         reply_markup=BACK_BUTTON
     )
 
-async def show_help(update: Update, context: ContextTypes):
+async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_within_working_hours():
-        await update.message.reply_text("⏰ Бот работает с 8:00 до 23:00. Пожалуйста, напишите позже.")
+        await update.message.reply_text(
+            f"⏰ Бот работает с {START_HOUR}:00 до {END_HOUR}:00. Пожалуйста, напишите позже."
+        )
         return
 
     help_text = (
@@ -217,7 +292,7 @@ async def show_help(update: Update, context: ContextTypes):
         "2. Нажми /start\n"
         "3. Отправь объявление боту (текст и, при желании, фото в формате JPG, JPEG, PNG или GIF)\n\n"
         "⚠ Требования к постам:\n"
-        "- Цель (продам/куплю/обмен) или укажите #оффтоп (если тема не связана с игрой Разрушители))\n"
+        "- Цель (продам/куплю/обмен) или укажите #оффтоп (если тема не связана с игрой Разрушители)\n"
         "- Цена или бюджет (Продаю за 1000₽/Куплю до 500₽/Меняю + доплата 300₽)\n"
         "- Почта (есть/утеряна/можно указать свою). Не требуется для #оффтоп\n"
         "- Фото (по желанию, только JPG, JPEG, PNG, GIF)\n"
@@ -225,101 +300,46 @@ async def show_help(update: Update, context: ContextTypes):
         "- Ваш контакт в Telegram (@ваш_ник)\n\n"
         "💬 Остались вопросы? Нажмите «👨‍💻 Написать администратору»"
     )
-
     await update.message.reply_text(help_text, reply_markup=BACK_BUTTON)
 
-async def some_handler(update: Update, context: ContextTypes):
-    if not is_within_working_hours():
-        current_time = datetime.now().strftime("%H:%M")
-        await update.message.reply_text(
-            f"⏰ Бот работает с {START_HOUR}:00 до {END_HOUR}:00. "
-            f"Сейчас {current_time}. Пожалуйста, напишите завтра с {START_HOUR}:00."
-        )
-        return
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    text = msg.text
 
-    subscription_ok, subscription_msg = await check_subscription_and_block(context, user_id)
-    if not subscription_ok:
-        await update.message.reply_text(
-            f"{subscription_msg if subscription_msg else f'❌ Чтобы опубликовать объявление, подпишитесь на канал {CHANNEL_ID}!'}\n"
-            "Нажмите кнопку ниже, чтобы проверить подписку:",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("Проверить подписку", callback_data="check_subscription")]
-            ])
-        )
-        return
-
-    limit_ok, limit_msg = check_post_limit_and_duplicates(user_id, text)
-    if not limit_ok:
-        await update.message.reply_text(limit_msg, reply_markup=MAIN_MENU)
-        return
-
-    content_ok, content_msg = check_message(text, user_username)
-    if not content_ok:
-        await update.message.reply_text(content_msg, reply_markup=MAIN_MENU)
-        return
-
-    photos = update.message.photo
-    document = update.message.document
-    if document and not check_file_extension(document.file_name):
-        await update.message.reply_text(
-            "❌ Прикреплены недопустимые файлы. Разрешены только изображения (JPG, JPEG, PNG, GIF).",
-            reply_markup=MAIN_MENU
-        )
-        return
-
-    try:
-        if photos:
-            await context.bot.send_photo(
-                chat_id=CHANNEL_ID,
-                photo=photos[-1].file_id,
-                caption=text
-            )
-        elif document:
-            await context.bot.send_document(
-                chat_id=CHANNEL_ID,
-                document=document.file_id,
-                caption=text
-            )
-        else:
-            await context.bot.send_message(
-                chat_id=CHANNEL_ID,
-                text=text
-            )
-
-        add_successful_post(user_id, text)
-        await update.message.reply_text(
-            "✅ Ваше объявление успешно опубликовано!",
-            reply_markup=MAIN_MENU
-        )
-    except Exception as e:
-        logger.error(f"Ошибка при публикации объявления: {e}")
-        await update.message.reply_text(
-            "❌ Произошла ошибка при публикации объявления. Попробуйте позже.",
-            reply_markup=MAIN_MENU
-        )
-
-async def handle_message(update: Update, context: ContextTypes):
-    text = update.message.text
+    # ветка меню
     if text == "👨‍💻 Написать администратору":
         await contact_admin(update, context)
-    elif text == "🆘 Помощь":
+        return
+    if text == "🆘 Помощь":
         await show_help(update, context)
-    elif text == "🔙 Назад в меню":
-        await update.message.reply_text("🏠 Главное меню:", reply_markup=MAIN_MENU)
-    elif text == "📤 Разместить объявление":
-        await update.message.reply_text(
-            "📝 Отправьте текст вашего объявления и, при желании, прикрепите фото Вашего аккаунта.",
+        return
+    if text == "🔙 Назад в меню":
+        await msg.reply_text("🏠 Главное меню:", reply_markup=MAIN_MENU)
+        context.user_data['awaiting_post'] = False
+        return
+    if text == "📤 Разместить объявление":
+        await msg.reply_text(
+            "📝 Отправьте текст вашего объявления и, при желании, прикрепите фото вашего аккаунта.",
             reply_markup=BACK_BUTTON
         )
         context.user_data['awaiting_post'] = True
-    elif context.user_data.get('awaiting_post', False):
-        # Обработка текста, фото или документа
+        return
+
+    # если ждём объявление — обрабатываем его
+    if context.user_data.get('awaiting_post', False):
         await handle_post(update, context)
         context.user_data['awaiting_post'] = False
-    else:
-        await update.message.reply_text("🔄 Пожалуйста, выберите действие 👇", reply_markup=MAIN_MENU)
+        return
 
-async def callback_query_handler(update: Update, context: ContextTypes):
+    # если прилетело фото/док с подписью вне режима — тоже воспринимаем как объявление
+    if msg.photo or msg.document:
+        await handle_post(update, context)
+        return
+
+    # дефолт
+    await msg.reply_text("🔄 Пожалуйста, выберите действие 👇", reply_markup=MAIN_MENU)
+
+async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if query.data == "check_subscription":
@@ -327,48 +347,51 @@ async def callback_query_handler(update: Update, context: ContextTypes):
         subscription_ok, subscription_msg = await check_subscription_and_block(context, user_id)
         if subscription_ok:
             await query.edit_message_text("✅ Вы успешно подписались на канал!")
-            await send_welcome_message(context, query.message.chat_id)
+            await send_welcome_message(context, query.message.chat.id)
         else:
             await query.edit_message_text(
                 f"❌ Вы не подписаны на канал (@shop_mrush1). Подпишитесь и попробуйте ещё раз.\n{subscription_msg if subscription_msg else ''}",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("Проверить подписку", callback_data="check_subscription")]
-                ])
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("Проверить подписку", callback_data="check_subscription")]]
+                )
             )
 
-async def error_handler(update: Update, context: ContextTypes):
-    logger.error(f"Ошибка: {context.error}")
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logger.exception(f"Ошибка: {context.error}")
 
+# ---------- Запуск ----------
 async def run_bot():
     application = Application.builder().token(TOKEN).build()
-    
+
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(callback_query_handler))
-    application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO | filters.Document.IMAGE, handle_message))
+    # Текст, фото и изображения-документы направляем в единый обработчик
+    application.add_handler(MessageHandler(
+        filters.TEXT | filters.PHOTO | filters.Document.IMAGE,
+        handle_message
+    ))
     application.add_error_handler(error_handler)
 
-    await application.initialize()
-    await application.start()
-    await application.updater.start_polling()
-    
-    logger.info("Бот запущен")
+    # Устойчивый polling: авто-переподключение
     while True:
-        await asyncio.sleep(3600)
+        try:
+            logger.info("Запуск polling...")
+            await application.run_polling(
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=True,
+                close_loop=False
+            )
+        except Exception as e:
+            logger.exception(f"Polling упал: {e}. Перезапуск через 5 сек...")
+            await asyncio.sleep(5)
 
 def main():
-    # Запуск Flask в отдельном потоке
+    # Запускаем Flask в отдельном потоке (для Render/Railway web-порта)
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
 
     # Запуск бота
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(run_bot())
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
-    finally:
-        loop.close()
+    asyncio.run(run_bot())
 
 if __name__ == '__main__':
     main()
