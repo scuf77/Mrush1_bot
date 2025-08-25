@@ -4,7 +4,13 @@ import os
 import threading
 from datetime import datetime, timedelta
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+    KeyboardButton
+)
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -63,6 +69,16 @@ BACK_BUTTON = ReplyKeyboardMarkup(
     keyboard=[[KeyboardButton("🔙 Назад в меню")]],
     resize_keyboard=True,
 )
+
+# Новая inline-клавиатура с прямой ссылкой на канал + проверка подписки
+SUBSCRIBE_CHECK_KEYBOARD = InlineKeyboardMarkup([
+    [
+        InlineKeyboardButton("Подписаться на канал", url="https://t.me/shop_mrush1"),
+    ],
+    [
+        InlineKeyboardButton("Проверить подписку", callback_data="check_subscription")
+    ]
+])
 
 def is_within_working_hours() -> bool:
     now = datetime.now()
@@ -208,10 +224,11 @@ async def handle_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     subscription_ok, subscription_msg = await check_subscription_and_block(context, user_id)
     if not subscription_ok:
+        # Улучшенное пользовательское сообщение с сразу доступной ссылкой
         await msg.reply_text(
             f"{subscription_msg if subscription_msg else f'❌ Чтобы опубликовать объявление, подпишитесь на канал {CHANNEL_ID}!'}\n"
-            "Нажмите кнопку ниже, чтобы проверить подписку:",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Проверить подписку", callback_data="check_subscription")]]),
+            "После подписки нажмите «Проверить подписку»:",
+            reply_markup=SUBSCRIBE_CHECK_KEYBOARD,
         )
         return
 
@@ -290,7 +307,7 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "- Цель (продам/куплю/обмен) или укажите #оффтоп (если тема не связана с игрой Разрушители)\n"
         "- Цена или бюджет (Продаю за 1000₽/Куплю до 500₽/Меняю + доплата 300₽)\n"
         "- Почта (есть/утеряна/можно указать свою). Не требуется для #оффтоп\n"
-        "- Фото (по желанию, только JPG, JPEG, PNG, GIF)\n"
+        "- Фото (по желанию)\n"
         "- Без мата, капса, ссылок и ботов\n"
         "- Ваш контакт в Telegram (@ваш_ник)\n\n"
         "💬 Остались вопросы? Нажмите «👨‍💻 Написать администратору»"
@@ -342,7 +359,7 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         else:
             await query.edit_message_text(
                 f"❌ Вы не подписаны на канал (@shop_mrush1). Подпишитесь и попробуйте ещё раз.\n{subscription_msg if subscription_msg else ''}",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Проверить подписку", callback_data="check_subscription")]]),
+                reply_markup=SUBSCRIBE_CHECK_KEYBOARD,
             )
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
