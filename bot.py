@@ -270,7 +270,7 @@ async def send_welcome_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int)
                 ),
             )
     except FileNotFoundError:
-        await context.bot.send_message(chat_id=chat_id, text="⚠️ Не удалось найти пример изображения.")
+        await context.bot.send_message(chat_id=chat_id, text="⚠️ Не удалось найти пример изображения.", disable_web_page_preview=True)
 
 # ---------- Обработка поста ----------
 async def handle_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -285,6 +285,7 @@ async def handle_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text(
             f"⏰ Бот работает с {START_HOUR}:00 до {END_HOUR}:00. Сейчас {current_time}. Пожалуйста, напишите завтра с {START_HOUR}:00.",
             reply_markup=MAIN_MENU,
+            disable_web_page_preview=True
         )
         return
 
@@ -295,23 +296,24 @@ async def handle_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{subscriptions_msg}\n"
             "Пожалуйста, подпишитесь на канал и беседу и нажмите «Проверить подписку»:",
             reply_markup=SUBSCRIBE_CHECK_KEYBOARD,
+            disable_web_page_preview=True
         )
         return
 
     if not text:
-        await msg.reply_text("❌ Добавьте текст объявления (можно как подпись к фото).", reply_markup=MAIN_MENU)
+        await msg.reply_text("❌ Добавьте текст объявления (можно как подпись к фото).", reply_markup=MAIN_MENU, disable_web_page_preview=True)
         return
 
     # Лимит и дубли
     limit_ok, limit_msg = check_post_limit_and_duplicates(user_id, text)
     if not limit_ok:
-        await msg.reply_text(limit_msg, reply_markup=MAIN_MENU)
+        await msg.reply_text(limit_msg, reply_markup=MAIN_MENU, disable_web_page_preview=True)
         return
 
     # Проверка контента
     content_ok, content_msg = check_message(text, user_username)
     if not content_ok:
-        await msg.reply_text(content_msg, reply_markup=MAIN_MENU)
+        await msg.reply_text(content_msg, reply_markup=MAIN_MENU, disable_web_page_preview=True)
         return
 
     photos = msg.photo or []
@@ -321,6 +323,7 @@ async def handle_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text(
             "❌ Недопустимые файлы. Разрешены только JPG, JPEG, PNG, GIF.",
             reply_markup=MAIN_MENU,
+            disable_web_page_preview=True
         )
         return
 
@@ -338,15 +341,16 @@ async def handle_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 caption=text
             )
         else:
-            await context.bot.send_message(chat_id=CHANNEL_ID, text=text)
+            await context.bot.send_message(chat_id=CHANNEL_ID, text=text, disable_web_page_preview=True)
 
         add_successful_post(user_id, text)
-        await msg.reply_text("✅ Ваше объявление успешно опубликовано!", reply_markup=MAIN_MENU)
+        await msg.reply_text("✅ Ваше объявление успешно опубликовано!", reply_markup=MAIN_MENU, disable_web_page_preview=True)
     except Exception as e:
         logger.exception(f"Ошибка при публикации объявления: {e}")
         await msg.reply_text(
             "❌ Произошла ошибка при публикации объявления. Попробуйте чуть позже.",
-            reply_markup=MAIN_MENU
+            reply_markup=MAIN_MENU,
+            disable_web_page_preview=True
         )
 
 # ---------- Команды / колбэки / сообщения ----------
@@ -362,7 +366,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_within_working_hours():
         current_time = datetime.now().strftime("%H:%M")
         await update.message.reply_text(
-            f"⏰ Бот работает с {START_HOUR}:00 до {END_HOUR}:00. Сейчас {current_time}. Пожалуйста, напишите позже."
+            f"⏰ Бот работает с {START_HOUR}:00 до {END_HOUR}:00. Сейчас {current_time}. Пожалуйста, напишите позже.",
+            disable_web_page_preview=True
         )
         return
 
@@ -371,7 +376,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"{subscriptions_msg}\n"
             "После подписки нажмите «Проверить подписку».",
-            reply_markup=SUBSCRIBE_CHECK_KEYBOARD
+            reply_markup=SUBSCRIBE_CHECK_KEYBOARD,
+            disable_web_page_preview=True
         )
         return
 
@@ -380,18 +386,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def contact_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_within_working_hours():
         await update.message.reply_text(
-            f"⏰ Бот работает только с {START_HOUR}:00 до {END_HOUR}:00. Попробуйте позже."
+            f"⏰ Бот работает только с {START_HOUR}:00 до {END_HOUR}:00. Попробуйте позже.",
+            disable_web_page_preview=True
         )
         return
     await update.message.reply_text(
         "👨‍💻 Если у вас возникли вопросы — пишите администратору: @vardges_grigoryan",
         reply_markup=BACK_BUTTON,
+        disable_web_page_preview=True
     )
 
 async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_within_working_hours():
         await update.message.reply_text(
-            f"⏰ Бот работает только с {START_HOUR}:00 до {END_HOUR}:00. Попробуйте позже."
+            f"⏰ Бот работает только с {START_HOUR}:00 до {END_HOUR}:00. Попробуйте позже.",
+            disable_web_page_preview=True
         )
         return
 
@@ -412,7 +421,12 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     '🔗 <a href="https://t.me/shop_mrush1/11">Правила площадки</a>\n'
     '🔗 <a href="https://t.me/shop_mrush1/13">Как правильно подать заявку</a>\n'
 )
-    await update.message.reply_text(help_text, parse_mode="HTML", reply_markup=BACK_BUTTON)
+    await update.message.reply_text(
+        help_text,
+        parse_mode="HTML",
+        reply_markup=BACK_BUTTON,
+        disable_web_page_preview=True
+    )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
@@ -425,13 +439,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_help(update, context)
         return
     if text == "🔙 Назад в меню":
-        await msg.reply_text("🏠 Главное меню:", reply_markup=MAIN_MENU)
+        await msg.reply_text("🏠 Главное меню:", reply_markup=MAIN_MENU, disable_web_page_preview=True)
         context.user_data["awaiting_post"] = False
         return
     if text == "📤 Разместить объявление":
         await msg.reply_text(
             "📝 Отправьте текст вашего объявления и, при желании, прикрепите фото аккаунта.",
             reply_markup=BACK_BUTTON,
+            disable_web_page_preview=True
         )
         context.user_data["awaiting_post"] = True
         return
@@ -448,7 +463,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Иначе просим выбрать действие
-    await msg.reply_text("🔄 Пожалуйста, выберите действие 👇", reply_markup=MAIN_MENU)
+    await msg.reply_text("🔄 Пожалуйста, выберите действие 👇", reply_markup=MAIN_MENU, disable_web_page_preview=True)
 
 async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -458,7 +473,7 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         user_id = query.from_user.id
         subscriptions_ok, subscriptions_msg = await check_subscriptions(context, user_id)
         if subscriptions_ok:
-            await query.edit_message_text("✅ Всё отлично! Вы подписаны на оба чата.")
+            await query.edit_message_text("✅ Всё отлично! Вы подписаны на оба чата.", disable_web_page_preview=True)
             # Отправляем привет
             await send_welcome_message(context, query.message.chat.id)
         else:
@@ -467,7 +482,8 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
                     f"{subscriptions_msg}\n\n"
                     "Убедитесь, что подписались и нажмите «Проверить подписку» снова."
                 ),
-                reply_markup=SUBSCRIBE_CHECK_KEYBOARD
+                reply_markup=SUBSCRIBE_CHECK_KEYBOARD,
+                disable_web_page_preview=True
             )
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
