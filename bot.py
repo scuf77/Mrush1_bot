@@ -399,7 +399,7 @@ async def contact_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_within_working_hours():
         await update.message.reply_text(
-            f"⏰ Бот работает только с {START_HOUR}:00 до {END_HOUR}:00. Попробуйте позже.",
+            f"⏰ Бот работает только с 8:00 до 23:00 по МСК. Попробуйте позже.",
             disable_web_page_preview=True
         )
         return
