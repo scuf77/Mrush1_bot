@@ -120,25 +120,59 @@ async def check_subscriptions(context: ContextTypes.DEFAULT_TYPE, user_id: int) 
 
     return True, ""
 
-def check_post_limit(user_id: int) -> tuple[bool, str]:
+def check_post_limit_and_duplicates(user_id: int, text: str) -> tuple[bool, str]:
     now = datetime.now()
     if user_id not in user_posts:
-        user_posts[user_id] = {"count": 0, "date": now}
+        user_posts[user_id] = {"posts": [], "count": 0, "date": now}
         return True, ""
 
     user_data = user_posts[user_id]
     # Сбрасываем счётчик, если наступил новый день
     if now.date() != user_data["date"].date():
-        user_posts[user_id] = {"count": 0, "date": now}
+        user_posts[user_id] = {"posts": [], "count": 0, "date": now}
 
     if user_posts[user_id]["count"] >= 3:
         return False, "❌ Вы превысили лимит в 3 поста за сутки. Попробуйте завтра."
 
+    # Проверка на дубликаты (90%+ схожести)
+    for post, post_time in user_data["posts"]:
+        similarity = calculate_similarity(text.strip(), post.strip())
+        if similarity >= 0.9:
+            time_diff = now - post_time
+            if time_diff < timedelta(days=1):
+                hours_left = 24 - time_diff.total_seconds() // 3600
+                return False, f"❌ Похожий пост уже публиковался. Повторная публикация возможна через {int(hours_left)} ч."
+
     return True, ""
 
-def add_successful_post(user_id: int):
+def calculate_similarity(text1: str, text2: str) -> float:
+    """Вычисляет схожесть двух текстов (0.0 - 1.0)"""
+    if not text1 or not text2:
+        return 0.0
+    
+    # Приводим к нижнему регистру и убираем лишние пробелы
+    text1 = text1.lower().strip()
+    text2 = text2.lower().strip()
+    
+    if text1 == text2:
+        return 1.0
+    
+    # Простой алгоритм схожести на основе общих слов
+    words1 = set(text1.split())
+    words2 = set(text2.split())
+    
+    if not words1 or not words2:
+        return 0.0
+    
+    intersection = words1.intersection(words2)
+    union = words1.union(words2)
+    
+    return len(intersection) / len(union) if union else 0.0
+
+def add_successful_post(user_id: int, text: str):
     now = datetime.now()
     user_data = user_posts[user_id]
+    user_data["posts"].append([text, now])
     user_data["count"] += 1
     user_data["date"] = now
 
@@ -196,7 +230,7 @@ async def send_welcome_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int)
         "• Укажите цену или бюджет\n"
         "• Оставьте свой @username для связи\n"
         "• Не используйте мат и капс\n\n"
-        "Полные правила: <a href='https://t.me/shop_mrush1/11'>t.me/shop_mrush1/11</a>"
+        "Полные правила: <a href='https://t.me/shop_mrush1/13'>t.me/shop_mrush1/13</a>"
     )
 
     await context.bot.send_message(
@@ -234,7 +268,7 @@ async def handle_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_within_working_hours():
         current_time = datetime.now().strftime("%H:%M")
         await msg.reply_text(
-            f"⏰ Бот работает с {START_HOUR}:00 до {END_HOUR}:00. Сейчас {current_time}. Пожалуйста, напишите завтра с {START_HOUR}:00.",
+            f"⏰ Бот работает с 8:00 до 23:00 по МСК. Сейчас {current_time}. Пожалуйста, напишите завтра с 8:00.",
             reply_markup=MAIN_MENU,
             disable_web_page_preview=True
         )
@@ -255,8 +289,8 @@ async def handle_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text("❌ Добавьте текст объявления (можно как подпись к фото).", reply_markup=MAIN_MENU, disable_web_page_preview=True)
         return
 
-    # Лимит постов
-    limit_ok, limit_msg = check_post_limit(user_id)
+    # Лимит и дубликаты
+    limit_ok, limit_msg = check_post_limit_and_duplicates(user_id, text)
     if not limit_ok:
         await msg.reply_text(limit_msg, reply_markup=MAIN_MENU, disable_web_page_preview=True)
         return
@@ -294,7 +328,7 @@ async def handle_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await context.bot.send_message(chat_id=CHANNEL_ID, text=text, disable_web_page_preview=True)
 
-        add_successful_post(user_id)
+        add_successful_post(user_id, text)
         await msg.reply_text("✅ Ваше объявление успешно опубликовано!", reply_markup=MAIN_MENU, disable_web_page_preview=True)
     except Exception as e:
         logger.exception(f"Ошибка при публикации объявления: {e}")
@@ -317,7 +351,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_within_working_hours():
         current_time = datetime.now().strftime("%H:%M")
         await update.message.reply_text(
-            f"⏰ Бот работает с {START_HOUR}:00 до {END_HOUR}:00. Сейчас {current_time}. Пожалуйста, напишите позже.",
+            f"⏰ Бот работает с 8:00 до 23:00 по МСК. Сейчас {current_time}. Пожалуйста, напишите позже.",
             disable_web_page_preview=True
         )
         return
@@ -352,7 +386,7 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Укажите цену или бюджет\n"
         "• Оставьте свой @username для связи\n"
         "• Не используйте мат и капс\n\n"
-        "Полные правила: <a href='https://t.me/shop_mrush1/11'>t.me/shop_mrush1/11</a>"
+        "Полные правила: <a href='https://t.me/shop_mrush1/13'>t.me/shop_mrush1/13</a>"
     )
     await update.message.reply_text(
         help_text,
