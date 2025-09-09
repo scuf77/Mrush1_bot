@@ -55,7 +55,8 @@ CHANNEL_ID = os.getenv("CHANNEL_ID", "@shop_mrush1")
 # Беседа (обязательное участие)
 CHAT_ID = "@chat_mrush1"  # Публичная супергруппа (см. https://t.me/chat_mrush1)
 
-# Убрали ограничения по времени работы
+START_HOUR = 5
+END_HOUR = 20
 
 FORBIDDEN_WORDS = {"сука", "блять", "пиздец", "хуй", "ебать"}
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif"}
@@ -85,7 +86,10 @@ SUBSCRIBE_CHECK_KEYBOARD = InlineKeyboardMarkup([
     ]
 ])
 
-# Убрали проверку времени работы
+def is_within_working_hours() -> bool:
+    now = datetime.now()
+    current_time = now.hour + now.minute / 60
+    return START_HOUR <= current_time < END_HOUR
 
 async def check_subscriptions(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> tuple[bool, str]:
     """
@@ -127,8 +131,8 @@ def check_post_limit(user_id: int) -> tuple[bool, str]:
     if now.date() != user_data["date"].date():
         user_posts[user_id] = {"count": 0, "date": now}
 
-    if user_posts[user_id]["count"] >= 10:  # Увеличили лимит
-        return False, "❌ Лимит: 10 постов в день. Попробуйте завтра."
+    if user_posts[user_id]["count"] >= 3:
+        return False, "❌ Вы превысили лимит в 3 поста за сутки. Попробуйте завтра."
 
     return True, ""
 
@@ -142,10 +146,10 @@ def check_message(text: str, user_username: str) -> tuple[bool, str]:
     text_lower = text.lower()
     user_username = (user_username or "").lower()
 
-    # Проверка на наличие @username
-    usernames = re.findall(r"@([a-zA-Z0-9_]{3,})", text)
+    # Проверка на наличие @username (связь с продавцом/покупателем)
+    usernames = re.findall(r"@([a-zA-Z0-9_]{5,})", text)
     if not usernames:
-        return False, "❌ Укажите свой @username для связи"
+        return False, "❌ В сообщении отсутствует контактная информация (@username)."
 
     # Проверка действия (продам/куплю/обмен)
     actions = ["продам", "обмен", "куплю", "продаю", "обменяю", "покупка", "продажа", "#офтоп", "#оффтоп"]
@@ -154,13 +158,25 @@ def check_message(text: str, user_username: str) -> tuple[bool, str]:
 
     # Мат
     if any(word in text_lower for word in FORBIDDEN_WORDS):
-        return False, "❌ Уберите мат из сообщения"
+        return False, "❌ Обнаружен мат. Уберите его."
 
     # Слишком много капса
-    if len(text) > 20 and (sum(c.isupper() for c in text) / len(text) > 0.8):
-        return False, "❌ Слишком много заглавных букв"
+    if len(text) > 10 and (sum(c.isupper() for c in text) / len(text) > 0.7):
+        return False, "❌ Слишком много текста в верхнем регистре (капс)."
 
-    return True, "✅ Сообщение подходит"
+    # Упоминания ботов
+    if re.search(r"@[a-zA-Z0-9_]*bot\b", text_lower):
+        return False, "❌ Упоминания ботов запрещены."
+
+    # Лишние упоминания чужих @username
+    for username in usernames:
+        username_lower = username.lower()
+        if username_lower.endswith("bot"):
+            continue
+        if username_lower not in [user_username, "vardges_grigoryan"]:
+            return False, f"❌ Упоминание @{username} запрещено. Укажите свой контакт (@ваш_ник)."
+
+    return True, "✅ Сообщение соответствует требованиям."
 
 def check_file_extension(file_name: str) -> bool:
     if not file_name:
@@ -191,6 +207,22 @@ async def send_welcome_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int)
         reply_markup=MAIN_MENU,
     )
 
+    # Пример изображения
+    try:
+        with open("primerbot.jpg", "rb") as photo:
+            await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=photo,
+                caption=(
+                    "Пример объявления:\n"
+                    "«Продам за 100₽ или обменяю на акк посильнее с моей доплатой. "
+                    "На аккаунте есть возможность указать свою почту. "
+                    "Контакты для связи: @vardges_grigoryan»"
+                ),
+            )
+    except FileNotFoundError:
+        await context.bot.send_message(chat_id=chat_id, text="⚠️ Не удалось найти пример изображения.", disable_web_page_preview=True)
+
 # ---------- Обработка поста ----------
 async def handle_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
@@ -198,6 +230,15 @@ async def handle_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = user.id
     user_username = user.username or ""
     text = (msg.text or msg.caption or "").strip()
+
+    if not is_within_working_hours():
+        current_time = datetime.now().strftime("%H:%M")
+        await msg.reply_text(
+            f"⏰ Бот работает с {START_HOUR}:00 до {END_HOUR}:00. Сейчас {current_time}. Пожалуйста, напишите завтра с {START_HOUR}:00.",
+            reply_markup=MAIN_MENU,
+            disable_web_page_preview=True
+        )
+        return
 
     # Перед публикацией ещё раз убеждаемся, что пользователь подписан
     subscriptions_ok, subscriptions_msg = await check_subscriptions(context, user_id)
@@ -272,6 +313,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Если да, показываем приветственное меню.
     """
     user_id = update.effective_user.id
+
+    if not is_within_working_hours():
+        current_time = datetime.now().strftime("%H:%M")
+        await update.message.reply_text(
+            f"⏰ Бот работает с {START_HOUR}:00 до {END_HOUR}:00. Сейчас {current_time}. Пожалуйста, напишите позже.",
+            disable_web_page_preview=True
+        )
+        return
 
     subscriptions_ok, subscriptions_msg = await check_subscriptions(context, user_id)
     if not subscriptions_ok:
