@@ -54,7 +54,7 @@ if not TOKEN:
 # Канал (обязательная подписка)
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@shop_mrush1")
 # Беседа (обязательное участие)
-CHAT_ID = "@chat_mrush1"  # Публичная супергруппа
+CHAT_ID = "@chat_mrush1"  # Публичная супергруппа (см. https://t.me/chat_mrush1)
 
 START_HOUR = 5
 END_HOUR = 20
@@ -97,7 +97,7 @@ async def check_subscriptions(context: ContextTypes.DEFAULT_TYPE, user_id: int) 
     Проверяет, состоит ли пользователь в обязательном канале и беседе.
     Возвращает (True, '') при успехе либо (False, текст_ошибки).
     """
-    # Сначала проверяем канал
+    # Сначала проверяем канал (ростер должен быть public: @shop_mrush1)
     try:
         member_channel = await context.bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
         if member_channel.status == "kicked":
@@ -108,7 +108,7 @@ async def check_subscriptions(context: ContextTypes.DEFAULT_TYPE, user_id: int) 
         logger.error(f"Ошибка проверки подписки на канал {CHANNEL_ID}: {e}")
         return False, "❌ Произошла ошибка при проверке подписки на канал."
 
-    # Затем проверяем беседу
+    # Затем проверяем беседу (должна быть публичной супергруппой: @chat_mrush1)
     try:
         member_chat = await context.bot.get_chat_member(chat_id=CHAT_ID, user_id=user_id)
         if member_chat.status == "kicked":
@@ -224,8 +224,9 @@ async def send_welcome_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int)
         "<b>🤖 Привет! Я бот для размещения объявлений о покупке/продаже цифровых ценностей.</b>\n\n"
         "📝 <b>Как разместить объявление:</b>\n"
         "1. Нажмите «📤 Разместить объявление»\n"
-        "2. Отправьте одно сообщение с текстом и до 5 фотографий (можно прикрепить фото к сообщению)\n"
-        "3. Готово! Объявление сразу опубликуется\n\n"
+        "2. Отправьте фото с текстом объявления в одном сообщении (подписью к фото)\n"
+        "3. Или отправьте до 5 фото отдельно, а затем текст\n"
+        "4. Готово!\n\n"
         "📌 <b>Основные правила:</b>\n"
         "• Укажите действие: продам/куплю/обмен\n"
         "• Укажите цену или бюджет\n"
@@ -266,11 +267,12 @@ async def handle_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = user.id
     user_username = user.username or ""
     
-    # Получаем текст из caption (подпись к фото) или из текстового сообщения
-    text = (msg.caption or msg.text or "").strip()
+    # Получаем текст из текущего сообщения или из сохранённых данных
+    text = (msg.text or msg.caption or context.user_data.get("post_text") or "").strip()
     
-    # Получаем фотографии из сообщения
-    photos = msg.photo or []
+    # Получаем фотографии из сохранённых данных или из текущего сообщения
+    saved_photos = context.user_data.get("post_photos", [])
+    current_photos = msg.photo or []
     document = msg.document
 
     if not is_within_working_hours():
@@ -293,29 +295,21 @@ async def handle_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Проверяем, есть ли контент для публикации
-    if not text and not photos and not document:
-        await msg.reply_text("❌ Добавьте текст объявления или фото.", reply_markup=MAIN_MENU, disable_web_page_preview=True)
+    if not text:
+        await msg.reply_text("❌ Добавьте текст объявления (можно как подпись к фото).", reply_markup=MAIN_MENU, disable_web_page_preview=True)
         return
 
-    # Проверка количества фото (не более 5)
-    if len(photos) > 5:
-        await msg.reply_text("❌ Можно прикрепить не более 5 фотографий к одному объявлению.", reply_markup=MAIN_MENU, disable_web_page_preview=True)
+    # Лимит и дубликаты
+    limit_ok, limit_msg = check_post_limit_and_duplicates(user_id, text)
+    if not limit_ok:
+        await msg.reply_text(limit_msg, reply_markup=MAIN_MENU, disable_web_page_preview=True)
         return
 
-    # Проверка текста (если есть)
-    if text:
-        # Лимит и дубликаты
-        limit_ok, limit_msg = check_post_limit_and_duplicates(user_id, text)
-        if not limit_ok:
-            await msg.reply_text(limit_msg, reply_markup=MAIN_MENU, disable_web_page_preview=True)
-            return
-
-        # Проверка контента
-        content_ok, content_msg = check_message(text, user_username)
-        if not content_ok:
-            await msg.reply_text(content_msg, reply_markup=MAIN_MENU, disable_web_page_preview=True)
-            return
+    # Проверка контента
+    content_ok, content_msg = check_message(text, user_username)
+    if not content_ok:
+        await msg.reply_text(content_msg, reply_markup=MAIN_MENU, disable_web_page_preview=True)
+        return
 
     # Проверка документа, если он есть
     if document and not check_file_extension(document.file_name):
@@ -327,42 +321,37 @@ async def handle_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        # Публикация в канал - берем всё из одного сообщения пользователя
-        if photos:
-            # У каждой фотографии есть массив с разными размерами
-            # Нам нужен последний элемент (самое высокое качество) для каждой фотографии
-            unique_photos = []
-            for photo in photos:
-                # photo - это массив объектов PhotoSize, берем последний (самый большой)
-                if isinstance(photo, list):
-                    # Старый формат - массив PhotoSize
-                    unique_photos.append(photo[-1].file_id)
-                else:
-                    # Новый формат - объект PhotoSize
-                    unique_photos.append(photo.file_id)
-            
-            if len(unique_photos) == 1:
+        # Если есть сохранённые фотографии (режим создания поста с несколькими фото)
+        if saved_photos:
+            if len(saved_photos) == 1:
                 # Одна фотография - используем send_photo
                 await context.bot.send_photo(
                     chat_id=CHANNEL_ID,
-                    photo=unique_photos[0],
+                    photo=saved_photos[0],
                     caption=text
                 )
             else:
                 # Несколько фотографий - используем send_media_group
                 media_group = []
-                for i, photo_file_id in enumerate(unique_photos):
+                for i, photo_id in enumerate(saved_photos):
                     # Подпись только к первой фотографии
-                    if i == 0 and text:
-                        media_group.append(InputMediaPhoto(media=photo_file_id, caption=text))
+                    if i == 0:
+                        media_group.append(InputMediaPhoto(media=photo_id, caption=text))
                     else:
-                        media_group.append(InputMediaPhoto(media=photo_file_id))
+                        media_group.append(InputMediaPhoto(media=photo_id))
                 
                 await context.bot.send_media_group(
                     chat_id=CHANNEL_ID,
                     media=media_group
                 )
-        # Если документ
+        # Если фотография в текущем сообщении (старый способ - для обратной совместимости)
+        elif current_photos:
+            await context.bot.send_photo(
+                chat_id=CHANNEL_ID,
+                photo=current_photos[-1].file_id,
+                caption=text
+            )
+        # Если документ в текущем сообщении
         elif document:
             await context.bot.send_document(
                 chat_id=CHANNEL_ID,
@@ -371,17 +360,10 @@ async def handle_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         # Только текст
         else:
-            await context.bot.send_message(
-                chat_id=CHANNEL_ID, 
-                text=text, 
-                disable_web_page_preview=True
-            )
+            await context.bot.send_message(chat_id=CHANNEL_ID, text=text, disable_web_page_preview=True)
 
-        if text:
-            add_successful_post(user_id, text)
-            
+        add_successful_post(user_id, text)
         await msg.reply_text("✅ Ваше объявление успешно опубликовано!", reply_markup=MAIN_MENU, disable_web_page_preview=True)
-        
     except Exception as e:
         logger.exception(f"Ошибка при публикации объявления: {e}")
         await msg.reply_text(
@@ -420,12 +402,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await send_welcome_message(context, update.effective_chat.id)
 
+async def contact_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "👨‍💻 Если у вас возникли вопросы — пишите администратору: @vardges_grigoryan",
+        reply_markup=MAIN_MENU,
+        disable_web_page_preview=True
+    )
+
 async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "📌 <b>Как разместить объявление:</b>\n"
         "1. Нажмите «📤 Разместить объявление»\n"
-        "2. Отправьте одно сообщение с текстом и до 5 фотографий (можно прикрепить фото к сообщению)\n"
-        "3. Готово! Объявление сразу опубликуется\n\n"
+        "2. Отправьте до 5 фотографий (если нужно)\n"
+        "3. Отправьте текст объявления\n"
+        "4. Готово!\n\n"
         "📌 <b>Основные правила:</b>\n"
         "• Укажите действие: продам/куплю/обмен\n"
         "• Укажите цену или бюджет\n"
@@ -450,15 +440,112 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if text == "📤 Разместить объявление":
         await msg.reply_text(
-            "📝 Отправьте одно сообщение с текстом объявления и прикрепите до 5 фотографий (если нужно).\n\n"
-            "Объявление сразу опубликуется после проверки.",
+            "📝 Отправьте фото с текстом в одном сообщении (подписью к фото).\n\n"
+            "Или отправьте до 5 фотографий подряд, а затем текст объявления отдельным сообщением.",
             reply_markup=MAIN_MENU,
             disable_web_page_preview=True
         )
+        context.user_data["awaiting_post"] = True
+        context.user_data["post_photos"] = []  # Список file_id фотографий
+        context.user_data["post_text"] = None  # Текст объявления
         return
 
-    # Если пользователь прислал сообщение с фото, документом или просто текст - обрабатываем как пост
-    if msg.photo or msg.document or text:
+    # Если пользователь уже выбрал «Разместить объявление»
+    if context.user_data.get("awaiting_post", False):
+        # Если это фотография
+        if msg.photo:
+            photos = context.user_data.get("post_photos", [])
+            if len(photos) >= 5:
+                await msg.reply_text(
+                    "❌ Вы уже добавили максимальное количество фотографий (5). "
+                    "Отправьте текст объявления для публикации.",
+                    reply_markup=MAIN_MENU,
+                    disable_web_page_preview=True
+                )
+                return
+            
+            # Сохраняем file_id самой большой версии фотографии
+            photos.append(msg.photo[-1].file_id)
+            context.user_data["post_photos"] = photos
+            
+            # Если есть подпись к фото — сразу публикуем
+            if msg.caption:
+                context.user_data["post_text"] = msg.caption.strip()
+                await handle_post(update, context)
+                context.user_data["awaiting_post"] = False
+                context.user_data.pop("post_photos", None)
+                context.user_data.pop("post_text", None)
+                return
+            
+            # Подписи нет — ждём текст отдельным сообщением
+            remaining = 5 - len(photos)
+            await msg.reply_text(
+                f"✅ Фотография добавлена ({len(photos)}/5).\n"
+                f"Можно добавить ещё {remaining} фотографий или отправить текст объявления для публикации.",
+                reply_markup=MAIN_MENU,
+                disable_web_page_preview=True
+            )
+            return
+        
+        # Если это документ (изображение)
+        if msg.document:
+            if not check_file_extension(msg.document.file_name):
+                await msg.reply_text(
+                    "❌ Недопустимые файлы. Разрешены только JPG, JPEG, PNG, GIF.",
+                    reply_markup=MAIN_MENU,
+                    disable_web_page_preview=True
+                )
+                return
+            
+            photos = context.user_data.get("post_photos", [])
+            if len(photos) >= 5:
+                await msg.reply_text(
+                    "❌ Вы уже добавили максимальное количество фотографий (5). "
+                    "Отправьте текст объявления для публикации.",
+                    reply_markup=MAIN_MENU,
+                    disable_web_page_preview=True
+                )
+                return
+            
+            # Для документов-изображений сохраняем file_id
+            photos.append(msg.document.file_id)
+            context.user_data["post_photos"] = photos
+            
+            # Если есть подпись к документу — сразу публикуем
+            if msg.caption:
+                context.user_data["post_text"] = msg.caption.strip()
+                await handle_post(update, context)
+                context.user_data["awaiting_post"] = False
+                context.user_data.pop("post_photos", None)
+                context.user_data.pop("post_text", None)
+                return
+            
+            # Подписи нет — ждём текст отдельным сообщением
+            remaining = 5 - len(photos)
+            await msg.reply_text(
+                f"✅ Изображение добавлено ({len(photos)}/5).\n"
+                f"Можно добавить ещё {remaining} фотографий или отправить текст объявления для публикации.",
+                reply_markup=MAIN_MENU,
+                disable_web_page_preview=True
+            )
+            return
+        
+        # Если это текст (и пользователь уже в режиме создания поста)
+        if text:
+            # Сохраняем текст, если его ещё нет
+            if not context.user_data.get("post_text"):
+                context.user_data["post_text"] = text.strip()
+            
+            # Публикуем объявление
+            await handle_post(update, context)
+            # Очищаем данные
+            context.user_data["awaiting_post"] = False
+            context.user_data.pop("post_photos", None)
+            context.user_data.pop("post_text", None)
+            return
+
+    # Если пользователь прислал фото или документ без режима создания поста — обрабатываем как пост
+    if msg.photo or msg.document:
         await handle_post(update, context)
         return
 
@@ -505,7 +592,7 @@ def main():
     )
     application.add_error_handler(error_handler)
 
-    logger.info("Запуск polling...")
+    logger.info("Запуск polling (синхронный)...")
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,
