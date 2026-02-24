@@ -260,6 +260,89 @@ async def send_welcome_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int)
     except FileNotFoundError:
         await context.bot.send_message(chat_id=chat_id, text="⚠️ Не удалось найти пример изображения.", disable_web_page_preview=True)
 
+# ---------- Отложенная публикация медиагруппы ----------
+async def publish_media_group_job(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Вызывается по таймеру (~2 сек) после получения последнего фото из медиагруппы.
+    К этому моменту все фото уже накоплены в user_data.
+    """
+    job_data = context.job.data
+    user_id = job_data["user_id"]
+    chat_id = job_data["chat_id"]
+    user_username = job_data.get("user_username", "")
+    photos = job_data.get("photos", [])
+    text = job_data.get("text", "").strip()
+
+    if not text:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"✅ Фотографий добавлено: {len(photos)}/5.\n"
+                 f"Теперь отправьте текст объявления для публикации.",
+            disable_web_page_preview=True
+        )
+        return
+
+    # --- Все проверки (подписка, лимит, контент) ---
+
+    subscriptions_ok, subscriptions_msg = await check_subscriptions(context, user_id)
+    if not subscriptions_ok:
+        await context.bot.send_message(chat_id=chat_id, text=subscriptions_msg, disable_web_page_preview=True)
+        return
+
+    limit_ok, limit_msg = check_post_limit_and_duplicates(user_id, text)
+    if not limit_ok:
+        await context.bot.send_message(chat_id=chat_id, text=limit_msg, disable_web_page_preview=True)
+        return
+
+    content_ok, content_msg = check_message(text, user_username)
+    if not content_ok:
+        await context.bot.send_message(chat_id=chat_id, text=content_msg, disable_web_page_preview=True)
+        return
+
+    if not is_within_working_hours():
+        current_time = datetime.now().strftime("%H:%M")
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"⏰ Бот работает с 8:00 до 23:00 по МСК. Сейчас {current_time}.",
+            disable_web_page_preview=True
+        )
+        return
+
+    try:
+        if len(photos) == 1:
+            await context.bot.send_photo(
+                chat_id=CHANNEL_ID,
+                photo=photos[0],
+                caption=text
+            )
+        else:
+            media_group = []
+            for i, photo_id in enumerate(photos):
+                if i == 0:
+                    media_group.append(InputMediaPhoto(media=photo_id, caption=text))
+                else:
+                    media_group.append(InputMediaPhoto(media=photo_id))
+            await context.bot.send_media_group(
+                chat_id=CHANNEL_ID,
+                media=media_group
+            )
+
+        add_successful_post(user_id, text)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="✅ Ваше объявление успешно опубликовано!",
+            reply_markup=MAIN_MENU,
+            disable_web_page_preview=True
+        )
+    except Exception as e:
+        logger.exception(f"Ошибка при публикации медиагруппы: {e}")
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="❌ Произошла ошибка при публикации объявления. Попробуйте чуть позже.",
+            reply_markup=MAIN_MENU,
+            disable_web_page_preview=True
+        )
+
 # ---------- Обработка поста ----------
 async def handle_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
@@ -468,9 +551,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             photos.append(msg.photo[-1].file_id)
             context.user_data["post_photos"] = photos
             
-            # Если есть подпись к фото — сразу публикуем
+            # Если есть подпись к фото, сохраняем
             if msg.caption:
                 context.user_data["post_text"] = msg.caption.strip()
+            
+            # Проверяем, является ли это частью медиагруппы (несколько фото в одном сообщении)
+            if msg.media_group_id:
+                # Отменяем предыдущий таймер для этой медиагруппы (если был)
+                job_name = f"media_group_{msg.from_user.id}_{msg.media_group_id}"
+                current_jobs = context.job_queue.get_jobs_by_name(job_name)
+                for job in current_jobs:
+                    job.schedule_removal()
+                
+                # Ставим новый таймер на 2 сек — когда все фото из группы придут
+                context.job_queue.run_once(
+                    publish_media_group_job,
+                    when=2,
+                    name=job_name,
+                    data={
+                        "user_id": msg.from_user.id,
+                        "chat_id": msg.chat.id,
+                        "user_username": msg.from_user.username or "",
+                        "photos": photos,
+                        "text": context.user_data.get("post_text", ""),
+                    }
+                )
+                # Очищаем состояние ожидания, т.к. публикацию возьмёт на себя job
+                context.user_data["awaiting_post"] = False
+                context.user_data.pop("post_photos", None)
+                context.user_data.pop("post_text", None)
+                return
+            
+            # Одно фото (без media_group_id) с подписью — сразу публикуем
+            if context.user_data.get("post_text"):
                 await handle_post(update, context)
                 context.user_data["awaiting_post"] = False
                 context.user_data.pop("post_photos", None)
@@ -511,9 +624,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             photos.append(msg.document.file_id)
             context.user_data["post_photos"] = photos
             
-            # Если есть подпись к документу — сразу публикуем
+            # Если есть подпись к документу, сохраняем
             if msg.caption:
                 context.user_data["post_text"] = msg.caption.strip()
+            
+            # Проверяем, является ли это частью медиагруппы
+            if msg.media_group_id:
+                job_name = f"media_group_{msg.from_user.id}_{msg.media_group_id}"
+                current_jobs = context.job_queue.get_jobs_by_name(job_name)
+                for job in current_jobs:
+                    job.schedule_removal()
+                
+                context.job_queue.run_once(
+                    publish_media_group_job,
+                    when=2,
+                    name=job_name,
+                    data={
+                        "user_id": msg.from_user.id,
+                        "chat_id": msg.chat.id,
+                        "user_username": msg.from_user.username or "",
+                        "photos": photos,
+                        "text": context.user_data.get("post_text", ""),
+                    }
+                )
+                context.user_data["awaiting_post"] = False
+                context.user_data.pop("post_photos", None)
+                context.user_data.pop("post_text", None)
+                return
+            
+            # Одиночный документ с подписью — сразу публикуем
+            if context.user_data.get("post_text"):
                 await handle_post(update, context)
                 context.user_data["awaiting_post"] = False
                 context.user_data.pop("post_photos", None)
