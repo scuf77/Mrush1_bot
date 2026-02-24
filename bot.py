@@ -329,20 +329,29 @@ async def handle_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # Публикация в канал - берем всё из одного сообщения пользователя
         if photos:
-            if len(photos) == 1:
+            # У каждой фотографии есть массив с разными размерами
+            # Нам нужен последний элемент (самое высокое качество) для каждой фотографии
+            unique_photos = []
+            for photo in photos:
+                # photo - это массив объектов PhotoSize, берем последний (самый большой)
+                if isinstance(photo, list):
+                    # Старый формат - массив PhotoSize
+                    unique_photos.append(photo[-1].file_id)
+                else:
+                    # Новый формат - объект PhotoSize
+                    unique_photos.append(photo.file_id)
+            
+            if len(unique_photos) == 1:
                 # Одна фотография - используем send_photo
                 await context.bot.send_photo(
                     chat_id=CHANNEL_ID,
-                    photo=photos[-1].file_id,
+                    photo=unique_photos[0],
                     caption=text
                 )
             else:
                 # Несколько фотографий - используем send_media_group
                 media_group = []
-                for i, photo in enumerate(photos):
-                    # Берем фото самого высокого качества (последнее в массиве)
-                    photo_file_id = photo.file_id
-                    
+                for i, photo_file_id in enumerate(unique_photos):
                     # Подпись только к первой фотографии
                     if i == 0 and text:
                         media_group.append(InputMediaPhoto(media=photo_file_id, caption=text))
