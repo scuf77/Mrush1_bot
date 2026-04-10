@@ -4,6 +4,7 @@ import re
 import os
 import threading
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from telegram import (
     Update,
@@ -63,6 +64,7 @@ def normalize_chat_id(chat_id: int | str) -> int | str:
 ACTIVE_MEMBER_STATUSES = {"member", "administrator", "creator", "owner"}
 BLOCKED_MEMBER_STATUSES = {"kicked", "banned"}
 SUBSCRIPTION_CHECK_RETRIES = 3
+MOSCOW_TZ = ZoneInfo("Europe/Moscow")
 
 # ---------- Конфигурация ----------
 load_dotenv()
@@ -75,8 +77,9 @@ CHANNEL_ID = normalize_chat_id(os.getenv("CHANNEL_ID", "@shop_mrush1"))
 # Беседа (обязательное участие)
 CHAT_ID = normalize_chat_id(os.getenv("CHAT_ID", "@chat_mrush1"))
 
-START_HOUR = 5
-END_HOUR = 20
+START_HOUR = 8
+END_HOUR = 23
+WORKING_HOURS_TEXT = f"{START_HOUR:02d}:00 до {END_HOUR:02d}:00 по МСК"
 
 FORBIDDEN_WORDS = {"сука", "блять", "пиздец", "хуй", "ебать"}
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif"}
@@ -107,9 +110,13 @@ SUBSCRIBE_CHECK_KEYBOARD = InlineKeyboardMarkup([
 ])
 
 def is_within_working_hours() -> bool:
-    now = datetime.now()
+    now = datetime.now(MOSCOW_TZ)
     current_time = now.hour + now.minute / 60
     return START_HOUR <= current_time < END_HOUR
+
+
+def now_msk() -> datetime:
+    return datetime.now(MOSCOW_TZ)
 
 
 def is_active_member(member) -> bool:
@@ -216,7 +223,7 @@ async def check_subscriptions(context: ContextTypes.DEFAULT_TYPE, user_id: int) 
     return True, ""
 
 def check_post_limit_and_duplicates(user_id: int, text: str) -> tuple[bool, str]:
-    now = datetime.now()
+    now = now_msk()
     if user_id not in user_posts:
         user_posts[user_id] = {"posts": [], "count": 0, "date": now}
         return True, ""
@@ -265,7 +272,7 @@ def calculate_similarity(text1: str, text2: str) -> float:
     return len(intersection) / len(union) if union else 0.0
 
 def add_successful_post(user_id: int, text: str):
-    now = datetime.now()
+    now = now_msk()
     user_data = user_posts[user_id]
     user_data["posts"].append([text, now])
     user_data["count"] += 1
@@ -401,10 +408,10 @@ async def publish_media_group_job(context: ContextTypes.DEFAULT_TYPE):
         return
 
     if not is_within_working_hours():
-        current_time = datetime.now().strftime("%H:%M")
+        current_time = now_msk().strftime("%H:%M")
         await context.bot.send_message(
             chat_id=chat_id,
-            text=f"⏰ Бот работает с 8:00 до 23:00 по МСК. Сейчас {current_time}.",
+            text=f"⏰ Бот работает с {WORKING_HOURS_TEXT}. Сейчас {current_time}.",
             disable_web_page_preview=True
         )
         return
@@ -460,9 +467,9 @@ async def handle_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     document = msg.document
 
     if not is_within_working_hours():
-        current_time = datetime.now().strftime("%H:%M")
+        current_time = now_msk().strftime("%H:%M")
         await msg.reply_text(
-            f"⏰ Бот работает с 8:00 до 23:00 по МСК. Сейчас {current_time}. Пожалуйста, напишите завтра с 8:00.",
+            f"⏰ Бот работает с {WORKING_HOURS_TEXT}. Сейчас {current_time}. Пожалуйста, напишите завтра с {START_HOUR:02d}:00.",
             reply_markup=MAIN_MENU,
             disable_web_page_preview=True
         )
@@ -567,9 +574,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
     if not is_within_working_hours():
-        current_time = datetime.now().strftime("%H:%M")
+        current_time = now_msk().strftime("%H:%M")
         await update.message.reply_text(
-            f"⏰ Бот работает с 8:00 до 23:00 по МСК. Сейчас {current_time}. Пожалуйста, напишите позже.",
+            f"⏰ Бот работает с {WORKING_HOURS_TEXT}. Сейчас {current_time}. Пожалуйста, напишите позже.",
             disable_web_page_preview=True
         )
         return
