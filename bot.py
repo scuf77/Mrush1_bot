@@ -168,7 +168,6 @@ async def get_chat_member_with_retry(
                 attempt,
                 e,
             )
-
         if attempt < SUBSCRIPTION_CHECK_RETRIES:
             await asyncio.sleep(max(delay_seconds, 1.0))
 
