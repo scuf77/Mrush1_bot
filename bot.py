@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 import os
@@ -12,6 +13,7 @@ from telegram import (
     KeyboardButton,
     InputMediaPhoto
 )
+from telegram.error import NetworkError, RetryAfter, TimedOut
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -45,6 +47,23 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+def normalize_chat_id(chat_id: int | str) -> int | str:
+    """Преобразует числовые chat_id из env в int, usernames оставляет строкой."""
+    if isinstance(chat_id, int):
+        return chat_id
+
+    chat_id_str = str(chat_id).strip()
+    if re.fullmatch(r"-?\d+", chat_id_str):
+        return int(chat_id_str)
+
+    return chat_id_str
+
+
+ACTIVE_MEMBER_STATUSES = {"member", "administrator", "creator", "owner"}
+BLOCKED_MEMBER_STATUSES = {"kicked", "banned"}
+SUBSCRIPTION_CHECK_RETRIES = 3
+
 # ---------- Конфигурация ----------
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
@@ -52,9 +71,9 @@ if not TOKEN:
     raise ValueError("BOT_TOKEN не найден в переменных окружения!")
 
 # Канал (обязательная подписка)
-CHANNEL_ID = os.getenv("CHANNEL_ID", "@shop_mrush1")
+CHANNEL_ID = normalize_chat_id(os.getenv("CHANNEL_ID", "@shop_mrush1"))
 # Беседа (обязательное участие)
-CHAT_ID = "@chat_mrush1"  # Публичная супергруппа (см. https://t.me/chat_mrush1)
+CHAT_ID = normalize_chat_id(os.getenv("CHAT_ID", "@chat_mrush1"))
 
 START_HOUR = 5
 END_HOUR = 20
@@ -92,6 +111,72 @@ def is_within_working_hours() -> bool:
     current_time = now.hour + now.minute / 60
     return START_HOUR <= current_time < END_HOUR
 
+
+def is_active_member(member) -> bool:
+    """Считает restricted-пользователя участником, если Telegram помечает его как is_member."""
+    status = str(getattr(member, "status", "")).lower()
+    if status in ACTIVE_MEMBER_STATUSES:
+        return True
+    if status == "restricted":
+        return bool(getattr(member, "is_member", False))
+    return False
+
+
+def build_subscription_check_error(chat_name: str) -> str:
+    return (
+        f"⚠️ Сейчас не удалось проверить вашу подписку на {chat_name}. "
+        "Подождите несколько секунд и нажмите «Проверить подписку» ещё раз."
+    )
+
+
+async def get_chat_member_with_retry(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int | str,
+    user_id: int
+):
+    last_error = None
+
+    for attempt in range(1, SUBSCRIPTION_CHECK_RETRIES + 1):
+        try:
+            member = await context.bot.get_chat_member(chat_id=chat_id, user_id=user_id)
+            logger.info(
+                "Проверка подписки: chat_id=%s user_id=%s status=%s is_member=%s",
+                chat_id,
+                user_id,
+                getattr(member, "status", None),
+                getattr(member, "is_member", None),
+            )
+            return member
+        except RetryAfter as e:
+            last_error = e
+            retry_after = getattr(e, "retry_after", 1)
+            delay_seconds = retry_after.total_seconds() if isinstance(retry_after, timedelta) else float(retry_after)
+            logger.warning(
+                "Проверка подписки отложена Telegram: chat_id=%s user_id=%s attempt=%s retry_after=%s",
+                chat_id,
+                user_id,
+                attempt,
+                delay_seconds,
+            )
+        except (TimedOut, NetworkError) as e:
+            last_error = e
+            delay_seconds = float(attempt)
+            logger.warning(
+                "Временная ошибка при проверке подписки: chat_id=%s user_id=%s attempt=%s error=%s",
+                chat_id,
+                user_id,
+                attempt,
+                e,
+            )
+
+        if attempt < SUBSCRIPTION_CHECK_RETRIES:
+            await asyncio.sleep(max(delay_seconds, 1.0))
+
+    if last_error:
+        raise last_error
+
+    raise RuntimeError("Не удалось проверить подписку: неизвестная ошибка")
+
 async def check_subscriptions(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> tuple[bool, str]:
     """
     Проверяет, состоит ли пользователь в обязательном канале и беседе.
@@ -99,25 +184,35 @@ async def check_subscriptions(context: ContextTypes.DEFAULT_TYPE, user_id: int) 
     """
     # Сначала проверяем канал (ростер должен быть public: @shop_mrush1)
     try:
-        member_channel = await context.bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
-        if member_channel.status == "kicked":
+        member_channel = await get_chat_member_with_retry(context, CHANNEL_ID, user_id)
+        status_channel = str(getattr(member_channel, "status", "")).lower()
+
+        if status_channel in BLOCKED_MEMBER_STATUSES:
             return False, "❌ Вы были заблокированы в канале и не можете использовать бота."
-        if member_channel.status not in ["member", "administrator", "creator"]:
+        if not is_active_member(member_channel):
             return False, "❌ Вы не подписаны на основной канал."
+    except (RetryAfter, TimedOut, NetworkError) as e:
+        logger.warning(f"Временная ошибка проверки подписки на канал {CHANNEL_ID}: {e}")
+        return False, build_subscription_check_error("основной канал")
     except Exception as e:
         logger.error(f"Ошибка проверки подписки на канал {CHANNEL_ID}: {e}")
-        return False, "❌ Произошла ошибка при проверке подписки на канал."
+        return False, build_subscription_check_error("основной канал")
 
     # Затем проверяем беседу (должна быть публичной супергруппой: @chat_mrush1)
     try:
-        member_chat = await context.bot.get_chat_member(chat_id=CHAT_ID, user_id=user_id)
-        if member_chat.status == "kicked":
+        member_chat = await get_chat_member_with_retry(context, CHAT_ID, user_id)
+        status_chat = str(getattr(member_chat, "status", "")).lower()
+
+        if status_chat in BLOCKED_MEMBER_STATUSES:
             return False, "❌ Вы были заблокированы в беседе и не можете использовать бота."
-        if member_chat.status not in ["member", "administrator", "creator"]:
+        if not is_active_member(member_chat):
             return False, "❌ Вы не состоите в обязательной беседе."
+    except (RetryAfter, TimedOut, NetworkError) as e:
+        logger.warning(f"Временная ошибка проверки участия в беседе {CHAT_ID}: {e}")
+        return False, build_subscription_check_error("обязательную беседу")
     except Exception as e:
         logger.error(f"Ошибка проверки участия в беседе {CHAT_ID}: {e}")
-        return False, "❌ Произошла ошибка при проверке вашего статуса в беседе."
+        return False, build_subscription_check_error("обязательную беседу")
 
     return True, ""
 
